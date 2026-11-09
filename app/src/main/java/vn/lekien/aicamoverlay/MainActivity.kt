@@ -1,3 +1,4 @@
+
 package vn.lekien.aicamoverlay
 
 import android.app.Activity
@@ -44,6 +45,7 @@ class MainActivity : Activity() {
             textSize = 16f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
+            setPadding(0, 16, 0, 24)
         }
 
         val permissionButton = Button(this).apply {
@@ -57,10 +59,37 @@ class MainActivity : Activity() {
             }
         }
 
+        val startButton = Button(this).apply {
+            text = "BẬT AI CAM OVERLAY"
+            setOnClickListener {
+                if (!Settings.canDrawOverlays(this@MainActivity)) {
+                    status.text = "Vui lòng cấp quyền Overlay trước"
+                    return@setOnClickListener
+                }
+
+                startService(
+                    Intent(this@MainActivity, OverlayService::class.java)
+                )
+                status.text = "Đang bật lớp phủ AI CAM"
+            }
+        }
+
+        val stopButton = Button(this).apply {
+            text = "TẮT AI CAM OVERLAY"
+            setOnClickListener {
+                stopService(
+                    Intent(this@MainActivity, OverlayService::class.java)
+                )
+                status.text = "Đã yêu cầu tắt lớp phủ"
+            }
+        }
+
         layout.addView(title)
         layout.addView(subtitle)
         layout.addView(status)
         layout.addView(permissionButton)
+        layout.addView(startButton)
+        layout.addView(stopButton)
 
         setContentView(layout)
         updateStatus()
@@ -73,9 +102,9 @@ class MainActivity : Activity() {
 
     private fun updateStatus() {
         status.text = if (Settings.canDrawOverlays(this)) {
-            "Overlay permission: GRANTED"
+            "Quyền Overlay: ĐÃ CẤP"
         } else {
-            "Overlay permission: NOT GRANTED"
+            "Quyền Overlay: CHƯA CẤP"
         }
     }
 }
