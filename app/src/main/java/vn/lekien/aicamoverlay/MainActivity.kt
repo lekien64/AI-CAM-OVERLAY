@@ -6,7 +6,9 @@ import android.os.Bundle
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.content.res.Configuration
 import android.graphics.Color
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.widget.LinearLayout
@@ -19,90 +21,113 @@ class MainActivity : Activity() {
     private fun dp(v: Int): Int =
         (v * resources.displayMetrics.density).toInt()
 
-    private fun gradient(
-        radius: Int,
-        colors: IntArray
-    ) = GradientDrawable(
-        GradientDrawable.Orientation.TL_BR,
-        colors
-    ).apply {
-        cornerRadius = dp(radius).toFloat()
-        setStroke(dp(1), Color.argb(180, 255, 255, 255))
-    }
+    private fun glassBackground(radius: Int) =
+        GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(
+                Color.rgb(10, 12, 18),
+                Color.rgb(27, 31, 40),
+                Color.rgb(12, 14, 20)
+            )
+        ).apply {
+            cornerRadius = dp(radius).toFloat()
+            setStroke(dp(1), Color.argb(160, 220, 230, 245))
+        }
 
     private fun pill(
         label: String,
         action: () -> Unit
     ) = TextView(this).apply {
         text = label
-        textSize = 15f
+        textSize = 14f
         gravity = Gravity.CENTER
-        setTextColor(Color.rgb(38, 55, 75))
-        setTypeface(null, android.graphics.Typeface.BOLD)
-        background = gradient(
-            40,
+        setTextColor(Color.WHITE)
+        setTypeface(null, Typeface.BOLD)
+        background = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
             intArrayOf(
-                Color.rgb(255, 255, 255),
-                Color.rgb(225, 240, 255),
-                Color.rgb(242, 235, 255)
+                Color.rgb(57, 63, 76),
+                Color.rgb(31, 35, 44)
             )
-        )
+        ).apply {
+            cornerRadius = dp(40).toFloat()
+            setStroke(dp(1), Color.argb(150, 210, 220, 235))
+        }
         setPadding(dp(18), dp(15), dp(18), dp(15))
         setOnClickListener { action() }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        buildScreen()
+    }
 
-        val layout = LinearLayout(this).apply {
+    private fun buildScreen() {
+        val landscape =
+            resources.configuration.orientation ==
+                Configuration.ORIENTATION_LANDSCAPE
+
+        val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(24), dp(24), dp(24), dp(24))
+            setPadding(
+                dp(if (landscape) 32 else 24),
+                dp(24),
+                dp(if (landscape) 32 else 24),
+                dp(24)
+            )
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(
-                    Color.rgb(239, 248, 255),
-                    Color.rgb(255, 255, 255),
-                    Color.rgb(239, 235, 255)
+                    Color.rgb(5, 7, 11),
+                    Color.rgb(19, 22, 30),
+                    Color.rgb(7, 9, 14)
                 )
             )
         }
 
         val glass = LinearLayout(this).apply {
+            orientation = if (landscape) {
+                LinearLayout.HORIZONTAL
+            } else {
+                LinearLayout.VERTICAL
+            }
+            gravity = Gravity.CENTER
+            setPadding(dp(20), dp(24), dp(20), dp(24))
+            background = glassBackground(30)
+        }
+
+        val info = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(18), dp(24), dp(18), dp(24))
-            background = gradient(
-                30,
-                intArrayOf(
-                    Color.argb(235, 255, 255, 255),
-                    Color.argb(220, 235, 247, 255),
-                    Color.argb(225, 246, 240, 255)
-                )
-            )
+        }
+
+        val controls = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
         }
 
         val title = TextView(this).apply {
             text = "✦  AI CAM OVERLAY"
             textSize = 25f
-            setTextColor(Color.rgb(35, 55, 78))
+            setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTypeface(null, Typeface.BOLD)
         }
 
         val subtitle = TextView(this).apply {
             text = "FLOW GLASS PHOTOGRAPHY ASSISTANT"
             textSize = 11f
-            setTextColor(Color.rgb(100, 120, 145))
+            setTextColor(Color.rgb(190, 198, 212))
             gravity = Gravity.CENTER
             setPadding(0, dp(12), 0, dp(20))
         }
 
         status = TextView(this).apply {
-            textSize = 14f
+            textSize = 13f
             gravity = Gravity.CENTER
-            setTextColor(Color.rgb(50, 90, 115))
-            setPadding(0, dp(12), 0, dp(20))
+            setTextColor(Color.rgb(225, 230, 240))
+            setPadding(dp(8), dp(12), dp(8), dp(20))
         }
 
         val permissionButton = pill("CẤP QUYỀN OVERLAY") {
@@ -118,6 +143,7 @@ class MainActivity : Activity() {
                 status.text = "Vui lòng cấp quyền Overlay trước"
                 return@pill
             }
+
             startService(
                 Intent(this@MainActivity, OverlayService::class.java)
             )
@@ -131,16 +157,16 @@ class MainActivity : Activity() {
             status.text = "Đã yêu cầu tắt lớp phủ"
         }
 
-        glass.addView(title)
-        glass.addView(subtitle)
-        glass.addView(status)
+        info.addView(title)
+        info.addView(subtitle)
+        info.addView(status)
 
         for (button in listOf(
             permissionButton,
             startButton,
             stopButton
         )) {
-            glass.addView(
+            controls.addView(
                 button,
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
@@ -151,7 +177,29 @@ class MainActivity : Activity() {
             )
         }
 
-        layout.addView(
+        if (landscape) {
+            glass.addView(
+                info,
+                LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            )
+            glass.addView(
+                controls,
+                LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            )
+        } else {
+            glass.addView(info)
+            glass.addView(
+                controls,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+        }
+
+        root.addView(
             glass,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -159,13 +207,18 @@ class MainActivity : Activity() {
             )
         )
 
-        setContentView(layout)
+        setContentView(root)
         updateStatus()
     }
 
     override fun onResume() {
         super.onResume()
         if (::status.isInitialized) updateStatus()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        buildScreen()
     }
 
     private fun updateStatus() {
