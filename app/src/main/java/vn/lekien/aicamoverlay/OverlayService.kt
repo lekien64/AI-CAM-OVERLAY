@@ -3,6 +3,7 @@ package vn.lekien.aicamoverlay
 
 import android.app.Service
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -13,91 +14,112 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.TextView
+import kotlin.math.abs
 
 class OverlayService : Service() {
 
     private lateinit var wm: WindowManager
     private lateinit var params: WindowManager.LayoutParams
     private lateinit var panel: LinearLayout
-
-    private lateinit var content: LinearLayout
-    private lateinit var autoButton: TextView
-    private lateinit var manualButton: TextView
-    private lateinit var minimizeButton: TextView
-    private lateinit var opacityButton: TextView
+    private lateinit var opacityText: TextView
 
     private var expanded = true
-    private var opacityIndex = 0
     private var mode = "AUTO"
-
-    private val opacities = floatArrayOf(
-        1f, 0.85f, 0.70f, 0.55f
-    )
+    private var glassAlpha = 38
+    private var isLandscape = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(
-        intent: Intent?,
-        flags: Int,
-        startId: Int
+        intent: Intent?, flags: Int, startId: Int
     ): Int {
         if (!this::panel.isInitialized || panel.parent == null) {
-            showPanel()
+            wm = getSystemService(WINDOW_SERVICE) as WindowManager
+            isLandscape = resources.configuration.orientation ==
+                Configuration.ORIENTATION_LANDSCAPE
+            createWindow()
+            renderPanel()
         }
         return START_NOT_STICKY
     }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        isLandscape = newConfig.orientation ==
+            Configuration.ORIENTATION_LANDSCAPE
 
-    private fun makeBackground(
-        color: Int,
-        strokeColor: Int = Color.TRANSPARENT
-    ) = GradientDrawable().apply {
-        shape = GradientDrawable.RECTANGLE
-        cornerRadius = dp(18).toFloat()
-        setColor(color)
-        setStroke(dp(1), strokeColor)
+        if (this::panel.isInitialized && panel.parent != null) {
+            renderPanel()
+        }
     }
 
-    private fun makeText(
+    private fun dp(v: Int) =
+        (v * resources.displayMetrics.density).toInt()
+
+    private fun glassBackground(radius: Int = 24) =
+        GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(
+                Color.argb(glassAlpha, 255, 255, 255),
+                Color.argb(glassAlpha, 225, 242, 255),
+                Color.argb(glassAlpha, 245, 235, 255)
+            )
+        ).apply {
+            cornerRadius = dp(radius).toFloat()
+            setStroke(dp(1), Color.argb(190, 255, 255, 255))
+        }
+
+    private fun pillBackground(selected: Boolean = false) =
+        GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            if (selected) {
+                intArrayOf(
+                    Color.rgb(220, 241, 255),
+                    Color.rgb(238, 231, 255)
+                )
+            } else {
+                intArrayOf(
+                    Color.argb(175, 255, 255, 255),
+                    Color.argb(145, 235, 245, 255)
+                )
+            }
+        ).apply {
+            cornerRadius = dp(40).toFloat()
+            setStroke(dp(1), Color.argb(190, 255, 255, 255))
+        }
+
+    private fun text(
         value: String,
         size: Float,
-        color: Int
+        color: Int = Color.rgb(35, 53, 72)
     ) = TextView(this).apply {
         text = value
         textSize = size
         setTextColor(color)
         gravity = Gravity.CENTER
-        setPadding(dp(12), dp(10), dp(12), dp(10))
+        setPadding(dp(12), dp(9), dp(12), dp(9))
     }
 
-    private fun makeButton(
+    private fun button(
         value: String,
-        onClick: () -> Unit
-    ) = makeText(value, 13f, Color.WHITE).apply {
-        background = makeBackground(
-            Color.argb(90, 65, 135, 185),
-            Color.argb(100, 150, 220, 255)
-        )
-        setOnClickListener { onClick() }
+        selected: Boolean = false,
+        action: () -> Unit
+    ) = text(value, 13f).apply {
+        background = pillBackground(selected)
+        setTypeface(null, Typeface.BOLD)
+        setOnClickListener { action() }
     }
 
-    private fun showPanel() {
-        wm = getSystemService(WINDOW_SERVICE) as WindowManager
-
+    private fun createWindow() {
         panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = makeBackground(
-                Color.argb(235, 18, 29, 43),
-                Color.argb(130, 130, 205, 235)
-            )
-            setPadding(dp(10), dp(8), dp(10), dp(10))
+            gravity = Gravity.CENTER
         }
 
         params = WindowManager.LayoutParams(
-            dp(270),
+            dp(280),
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
@@ -108,182 +130,187 @@ class OverlayService : Service() {
             y = dp(180)
         }
 
+        wm.addView(panel, params)
+    }
+
+    private fun renderPanel() {
+        panel.removeAllViews()
+
+        if (!expanded) {
+            renderBubble()
+            return
+        }
+
+        params.width = dp(if (isLandscape) 245 else 280)
+        panel.orientation = LinearLayout.VERTICAL
+        panel.setPadding(dp(10), dp(8), dp(10), dp(10))
+        panel.background = glassBackground(26)
+
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val title = makeText(
-            "✦  AI CAM",
-            17f,
-            Color.WHITE
-        ).apply {
+        val title = text("✦  AI CAM", 18f).apply {
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             setTypeface(null, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                dp(48),
-                1f
-            )
+            layoutParams = LinearLayout.LayoutParams(0, dp(46), 1f)
         }
 
-        minimizeButton = makeButton("−") {
-            toggleExpanded()
+        val minimize = button("−") {
+            expanded = false
+            renderPanel()
         }
 
         header.addView(title)
-        header.addView(minimizeButton)
+        header.addView(minimize)
         panel.addView(header)
+        attachDrag(title)
 
-        content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-        }
-
-        val subtitle = makeText(
-            "OFFLINE PHOTOGRAPHY ASSISTANT",
-            9f,
-            Color.LTGRAY
-        )
+        panel.addView(text("WHITE FLOW GLASS CAMERA", 9f))
 
         val modeRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
         }
 
-        autoButton = makeButton("AUTO") {
+        val auto = button("AUTO", mode == "AUTO") {
             mode = "AUTO"
-            updateModeButtons()
+            updateMode(modeRow)
         }
 
-        manualButton = makeButton("MANUAL") {
+        val manual = button("MANUAL", mode == "MANUAL") {
             mode = "MANUAL"
-            updateModeButtons()
+            updateMode(modeRow)
         }
 
-        modeRow.addView(
-            autoButton,
-            LinearLayout.LayoutParams(
-                0, dp(46), 1f
-            ).apply {
-                marginEnd = dp(5)
-            }
+        modeRow.addView(auto, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+            marginEnd = dp(5)
+        })
+        modeRow.addView(manual, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+            marginStart = dp(5)
+        })
+
+        panel.addView(modeRow)
+
+        panel.addView(
+            text("Khung hướng dẫn chụp ảnh sẽ hiển thị tại đây", 11f)
         )
 
-        modeRow.addView(
-            manualButton,
-            LinearLayout.LayoutParams(
-                0, dp(46), 1f
-            ).apply {
-                marginStart = dp(5)
-            }
-        )
+        opacityText = text("", 11f)
+        panel.addView(opacityText)
 
-        val guide = makeText(
-            "Khung hướng dẫn chụp ảnh sẽ hiển thị tại đây",
-            11f,
-            Color.LTGRAY
-        )
-
-        opacityButton = makeButton(
-            "ĐỘ TRONG SUỐT: 100%"
-        ) {
-            opacityIndex = (opacityIndex + 1) % opacities.size
-            panel.alpha = opacities[opacityIndex]
-            updateOpacityText()
-        }
-
-        val closeButton = makeButton("ĐÓNG OVERLAY") {
-            stopSelf()
-        }
-
-        content.addView(subtitle)
-        content.addView(modeRow)
-        content.addView(guide)
-        content.addView(opacityButton)
-        content.addView(closeButton)
-
-        panel.addView(content)
-
-        title.setOnTouchListener(
-            object : View.OnTouchListener {
-                private var startX = 0
-                private var startY = 0
-                private var touchX = 0f
-                private var touchY = 0f
-
-                override fun onTouch(
-                    view: View,
-                    event: MotionEvent
-                ): Boolean {
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN -> {
-                            startX = params.x
-                            startY = params.y
-                            touchX = event.rawX
-                            touchY = event.rawY
-                            return true
-                        }
-
-                        MotionEvent.ACTION_MOVE -> {
-                            params.x = startX +
-                                (event.rawX - touchX).toInt()
-                            params.y = startY +
-                                (event.rawY - touchY).toInt()
-
-                            wm.updateViewLayout(panel, params)
-                            return true
-                        }
-
-                        MotionEvent.ACTION_UP -> return true
+        val slider = SeekBar(this).apply {
+            max = 60
+            progress = glassAlpha - 15
+            setOnSeekBarChangeListener(
+                object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(
+                        seekBar: SeekBar?, progress: Int, fromUser: Boolean
+                    ) {
+                        glassAlpha = progress + 15
+                        panel.background = glassBackground(26)
+                        updateOpacityText()
                     }
-                    return true
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
                 }
-            }
-        )
+            )
+        }
 
-        updateModeButtons()
+        panel.addView(slider)
+
+        panel.addView(button("ĐÓNG OVERLAY") {
+            stopSelf()
+        })
+
+        updateMode(modeRow)
         updateOpacityText()
-
-        wm.addView(panel, params)
-    }
-
-    private fun updateModeButtons() {
-        autoButton.alpha = if (mode == "AUTO") 1f else 0.55f
-        manualButton.alpha = if (mode == "MANUAL") 1f else 0.55f
-
-        autoButton.setTypeface(
-            null,
-            if (mode == "AUTO") Typeface.BOLD else Typeface.NORMAL
-        )
-
-        manualButton.setTypeface(
-            null,
-            if (mode == "MANUAL") Typeface.BOLD else Typeface.NORMAL
-        )
-    }
-
-    private fun updateOpacityText() {
-        opacityButton.text =
-            "ĐỘ TRONG SUỐT: ${(opacities[opacityIndex] * 100).toInt()}%"
-    }
-
-    private fun toggleExpanded() {
-        expanded = !expanded
-
-        content.visibility =
-            if (expanded) View.VISIBLE else View.GONE
-
-        minimizeButton.text = if (expanded) "−" else "+"
-
-        panel.requestLayout()
         wm.updateViewLayout(panel, params)
     }
 
+    private fun renderBubble() {
+        params.width = dp(48)
+        panel.setPadding(0, 0, 0, 0)
+
+        val bubble = text("✦", 21f).apply {
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TL_BR,
+                intArrayOf(
+                    Color.argb(glassAlpha, 255, 255, 255),
+                    Color.argb(glassAlpha, 220, 240, 255)
+                )
+            ).apply {
+                cornerRadius = dp(30).toFloat()
+                setStroke(dp(1), Color.argb(210, 255, 255, 255))
+            }
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+        }
+
+        panel.addView(bubble)
+        attachDrag(bubble) {
+            expanded = true
+            renderPanel()
+        }
+        wm.updateViewLayout(panel, params)
+    }
+
+    private fun attachDrag(view: View, onTap: (() -> Unit)? = null) {
+        view.setOnTouchListener(object : View.OnTouchListener {
+            var sx = 0
+            var sy = 0
+            var tx = 0f
+            var ty = 0f
+            var moved = false
+
+            override fun onTouch(v: View, e: MotionEvent): Boolean {
+                when (e.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        sx = params.x
+                        sy = params.y
+                        tx = e.rawX
+                        ty = e.rawY
+                        moved = false
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dx = e.rawX - tx
+                        val dy = e.rawY - ty
+                        if (abs(dx) > dp(4) || abs(dy) > dp(4)) {
+                            moved = true
+                        }
+                        if (moved) {
+                            params.x = sx + dx.toInt()
+                            params.y = sy + dy.toInt()
+                            wm.updateViewLayout(panel, params)
+                        }
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (!moved) onTap?.invoke()
+                        return true
+                    }
+                }
+                return true
+            }
+        })
+    }
+
+    private fun updateMode(row: LinearLayout) {
+        for (i in 0 until row.childCount) {
+            val item = row.getChildAt(i) as TextView
+            val selected = item.text.toString() == mode
+            item.background = pillBackground(selected)
+        }
+    }
+
+    private fun updateOpacityText() {
+        if (this::opacityText.isInitialized) {
+            opacityText.text = "ĐỘ TRONG SUỐT: ${100 - glassAlpha}%"
+        }
+    }
+
     override fun onDestroy() {
-        if (
-            this::panel.isInitialized &&
-            panel.parent != null
-        ) {
+        if (this::panel.isInitialized && panel.parent != null) {
             wm.removeView(panel)
         }
         super.onDestroy()
