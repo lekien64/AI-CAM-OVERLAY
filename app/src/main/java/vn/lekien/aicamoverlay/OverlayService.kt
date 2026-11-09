@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import kotlin.math.abs
+import kotlin.math.min
 
 class OverlayService : Service() {
 
@@ -27,7 +28,7 @@ class OverlayService : Service() {
 
     private var expanded = true
     private var mode = "AUTO"
-    private var glassAlpha = 38
+    private var glassAlpha = 205
     private var isLandscape = false
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -47,6 +48,7 @@ class OverlayService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+
         isLandscape = newConfig.orientation ==
             Configuration.ORIENTATION_LANDSCAPE
 
@@ -55,20 +57,20 @@ class OverlayService : Service() {
         }
     }
 
-    private fun dp(v: Int) =
-        (v * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
-    private fun glassBackground(radius: Int = 24) =
+    private fun glassBackground(radius: Int = 26) =
         GradientDrawable(
             GradientDrawable.Orientation.TL_BR,
             intArrayOf(
-                Color.argb(glassAlpha, 255, 255, 255),
-                Color.argb(glassAlpha, 225, 242, 255),
-                Color.argb(glassAlpha, 245, 235, 255)
+                Color.argb(glassAlpha, 8, 10, 14),
+                Color.argb(glassAlpha, 22, 25, 32),
+                Color.argb(glassAlpha, 9, 11, 16)
             )
         ).apply {
             cornerRadius = dp(radius).toFloat()
-            setStroke(dp(1), Color.argb(190, 255, 255, 255))
+            setStroke(dp(1), Color.argb(150, 220, 230, 245))
         }
 
     private fun pillBackground(selected: Boolean = false) =
@@ -76,24 +78,24 @@ class OverlayService : Service() {
             GradientDrawable.Orientation.LEFT_RIGHT,
             if (selected) {
                 intArrayOf(
-                    Color.rgb(220, 241, 255),
-                    Color.rgb(238, 231, 255)
+                    Color.rgb(75, 82, 96),
+                    Color.rgb(48, 54, 66)
                 )
             } else {
                 intArrayOf(
-                    Color.argb(175, 255, 255, 255),
-                    Color.argb(145, 235, 245, 255)
+                    Color.argb(210, 48, 53, 64),
+                    Color.argb(210, 29, 33, 42)
                 )
             }
         ).apply {
             cornerRadius = dp(40).toFloat()
-            setStroke(dp(1), Color.argb(190, 255, 255, 255))
+            setStroke(dp(1), Color.argb(150, 210, 220, 235))
         }
 
     private fun text(
         value: String,
         size: Float,
-        color: Int = Color.rgb(35, 53, 72)
+        color: Int = Color.WHITE
     ) = TextView(this).apply {
         text = value
         textSize = size
@@ -133,19 +135,7 @@ class OverlayService : Service() {
         wm.addView(panel, params)
     }
 
-    private fun renderPanel() {
-        panel.removeAllViews()
-
-        if (!expanded) {
-            renderBubble()
-            return
-        }
-
-        params.width = dp(if (isLandscape) 245 else 280)
-        panel.orientation = LinearLayout.VERTICAL
-        panel.setPadding(dp(10), dp(8), dp(10), dp(10))
-        panel.background = glassBackground(26)
-
+    private fun createHeader(): LinearLayout {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -164,127 +154,224 @@ class OverlayService : Service() {
 
         header.addView(title)
         header.addView(minimize)
-        panel.addView(header)
         attachDrag(title)
 
-        panel.addView(text("WHITE FLOW GLASS CAMERA", 9f))
+        return header
+    }
 
-        val modeRow = LinearLayout(this).apply {
+    private fun createModeRow(): LinearLayout {
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
         }
 
         val auto = button("AUTO", mode == "AUTO") {
             mode = "AUTO"
-            updateMode(modeRow)
+            updateMode(row)
         }
 
         val manual = button("MANUAL", mode == "MANUAL") {
             mode = "MANUAL"
-            updateMode(modeRow)
+            updateMode(row)
         }
 
-        modeRow.addView(auto, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-            marginEnd = dp(5)
-        })
-        modeRow.addView(manual, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-            marginStart = dp(5)
-        })
-
-        panel.addView(modeRow)
-
-        panel.addView(
-            text("Khung hướng dẫn chụp ảnh sẽ hiển thị tại đây", 11f)
+        row.addView(
+            auto,
+            LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                marginEnd = dp(5)
+            }
         )
 
+        row.addView(
+            manual,
+            LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                marginStart = dp(5)
+            }
+        )
+
+        return row
+    }
+
+    private fun createOpacityControls(): LinearLayout {
+        val column = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
         opacityText = text("", 11f)
-        panel.addView(opacityText)
 
         val slider = SeekBar(this).apply {
-            max = 60
-            progress = glassAlpha - 15
+            max = 95
+            progress = glassAlpha - 150
+            progressTintList =
+                android.content.res.ColorStateList.valueOf(Color.WHITE)
+            thumbTintList =
+                android.content.res.ColorStateList.valueOf(Color.WHITE)
+
             setOnSeekBarChangeListener(
                 object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(
-                        seekBar: SeekBar?, progress: Int, fromUser: Boolean
+                        seekBar: SeekBar?,
+                        progress: Int,
+                        fromUser: Boolean
                     ) {
-                        glassAlpha = progress + 15
+                        glassAlpha = progress + 150
                         panel.background = glassBackground(26)
                         updateOpacityText()
                     }
-                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+
+                    override fun onStartTrackingTouch(
+                        seekBar: SeekBar?
+                    ) {}
+
+                    override fun onStopTrackingTouch(
+                        seekBar: SeekBar?
+                    ) {}
                 }
             )
         }
 
-        panel.addView(slider)
+        column.addView(opacityText)
+        column.addView(slider)
 
-        panel.addView(button("ĐÓNG OVERLAY") {
-            stopSelf()
-        })
+        column.addView(
+            button("ĐÓNG OVERLAY") {
+                stopSelf()
+            }
+        )
 
-        updateMode(modeRow)
         updateOpacityText()
+        return column
+    }
+
+    private fun renderPanel() {
+        panel.removeAllViews()
+
+        if (!expanded) {
+            renderBubble()
+            return
+        }
+
+        panel.background = glassBackground(26)
+        panel.setPadding(dp(10), dp(8), dp(10), dp(10))
+
+        if (isLandscape) {
+            val screenWidth = resources.configuration.screenWidthDp
+            params.width = dp(min(screenWidth - 32, 560))
+
+            panel.orientation = LinearLayout.HORIZONTAL
+            panel.gravity = Gravity.CENTER_VERTICAL
+
+            val left = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            }
+
+            val right = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                setPadding(dp(8), 0, 0, 0)
+            }
+
+            left.addView(createHeader())
+            left.addView(text("AI CAMERA • FLOW GLASS", 9f))
+            left.addView(createModeRow())
+
+            right.addView(
+                text("Khung hướng dẫn chụp ảnh sẽ hiển thị tại đây", 11f)
+            )
+            right.addView(createOpacityControls())
+
+            panel.addView(left)
+            panel.addView(right)
+
+        } else {
+            params.width = dp(280)
+            panel.orientation = LinearLayout.VERTICAL
+
+            panel.addView(createHeader())
+            panel.addView(text("AI CAMERA • FLOW GLASS", 9f))
+            panel.addView(createModeRow())
+
+            panel.addView(
+                text("Khung hướng dẫn chụp ảnh sẽ hiển thị tại đây", 11f)
+            )
+
+            panel.addView(createOpacityControls())
+        }
+
         wm.updateViewLayout(panel, params)
     }
 
     private fun renderBubble() {
         params.width = dp(48)
+        panel.orientation = LinearLayout.VERTICAL
         panel.setPadding(0, 0, 0, 0)
 
         val bubble = text("✦", 21f).apply {
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(
-                    Color.argb(glassAlpha, 255, 255, 255),
-                    Color.argb(glassAlpha, 220, 240, 255)
+                    Color.argb(glassAlpha, 10, 12, 18),
+                    Color.argb(glassAlpha, 35, 40, 50)
                 )
             ).apply {
                 cornerRadius = dp(30).toFloat()
-                setStroke(dp(1), Color.argb(210, 255, 255, 255))
+                setStroke(dp(1), Color.argb(190, 220, 230, 245))
             }
+
             layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
         }
 
         panel.addView(bubble)
+
         attachDrag(bubble) {
             expanded = true
             renderPanel()
         }
+
         wm.updateViewLayout(panel, params)
     }
 
-    private fun attachDrag(view: View, onTap: (() -> Unit)? = null) {
+    private fun attachDrag(
+        view: View,
+        onTap: (() -> Unit)? = null
+    ) {
         view.setOnTouchListener(object : View.OnTouchListener {
-            var sx = 0
-            var sy = 0
-            var tx = 0f
-            var ty = 0f
+            var startX = 0
+            var startY = 0
+            var touchX = 0f
+            var touchY = 0f
             var moved = false
 
-            override fun onTouch(v: View, e: MotionEvent): Boolean {
-                when (e.action) {
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
+                when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
-                        sx = params.x
-                        sy = params.y
-                        tx = e.rawX
-                        ty = e.rawY
+                        startX = params.x
+                        startY = params.y
+                        touchX = event.rawX
+                        touchY = event.rawY
                         moved = false
                         return true
                     }
+
                     MotionEvent.ACTION_MOVE -> {
-                        val dx = e.rawX - tx
-                        val dy = e.rawY - ty
+                        val dx = event.rawX - touchX
+                        val dy = event.rawY - touchY
+
                         if (abs(dx) > dp(4) || abs(dy) > dp(4)) {
                             moved = true
                         }
+
                         if (moved) {
-                            params.x = sx + dx.toInt()
-                            params.y = sy + dy.toInt()
+                            params.x = startX + dx.toInt()
+                            params.y = startY + dy.toInt()
                             wm.updateViewLayout(panel, params)
                         }
                         return true
                     }
+
                     MotionEvent.ACTION_UP -> {
                         if (!moved) onTap?.invoke()
                         return true
@@ -298,14 +385,16 @@ class OverlayService : Service() {
     private fun updateMode(row: LinearLayout) {
         for (i in 0 until row.childCount) {
             val item = row.getChildAt(i) as TextView
-            val selected = item.text.toString() == mode
-            item.background = pillBackground(selected)
+            item.background = pillBackground(
+                item.text.toString() == mode
+            )
         }
     }
 
     private fun updateOpacityText() {
         if (this::opacityText.isInitialized) {
-            opacityText.text = "ĐỘ TRONG SUỐT: ${100 - glassAlpha}%"
+            opacityText.text =
+                "ĐỘ ĐẬM KÍNH: ${glassAlpha * 100 / 255}%"
         }
     }
 
