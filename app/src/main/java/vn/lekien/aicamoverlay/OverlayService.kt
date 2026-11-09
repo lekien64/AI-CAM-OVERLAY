@@ -11,6 +11,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.OrientationEventListener
 import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
@@ -26,10 +27,38 @@ class OverlayService : Service() {
     private lateinit var panel: LinearLayout
     private lateinit var opacityText: TextView
 
+    private var orientationListener: OrientationEventListener? = null
     private var expanded = true
     private var mode = "AUTO"
     private var glassAlpha = 205
     private var isLandscape = false
+
+    override fun onCreate() {
+        super.onCreate()
+
+        orientationListener = object : OrientationEventListener(this) {
+            override fun onOrientationChanged(degrees: Int) {
+                if (degrees == ORIENTATION_UNKNOWN) return
+
+                val landscape =
+                    degrees in 45..135 || degrees in 225..315
+
+                if (landscape != isLandscape) {
+                    isLandscape = landscape
+
+                    if (this@OverlayService::panel.isInitialized &&
+                        panel.parent != null
+                    ) {
+                        renderPanel()
+                    }
+                }
+            }
+        }
+
+        if (orientationListener?.canDetectOrientation() == true) {
+            orientationListener?.enable()
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -38,8 +67,11 @@ class OverlayService : Service() {
     ): Int {
         if (!this::panel.isInitialized || panel.parent == null) {
             wm = getSystemService(WINDOW_SERVICE) as WindowManager
-            isLandscape = resources.configuration.orientation ==
-                Configuration.ORIENTATION_LANDSCAPE
+
+            isLandscape =
+                resources.configuration.orientation ==
+                    Configuration.ORIENTATION_LANDSCAPE
+
             createWindow()
             renderPanel()
         }
@@ -49,8 +81,10 @@ class OverlayService : Service() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
 
-        isLandscape = newConfig.orientation ==
-            Configuration.ORIENTATION_LANDSCAPE
+        // Không ghi đè trạng thái cảm biến khi Android đang khóa xoay.
+        if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            isLandscape = true
+        }
 
         if (this::panel.isInitialized && panel.parent != null) {
             renderPanel()
@@ -263,14 +297,20 @@ class OverlayService : Service() {
 
             val left = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
             }
 
             val right = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
                 setPadding(dp(8), 0, 0, 0)
             }
 
@@ -399,9 +439,13 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        orientationListener?.disable()
+        orientationListener = null
+
         if (this::panel.isInitialized && panel.parent != null) {
             wm.removeView(panel)
         }
+
         super.onDestroy()
     }
 }
