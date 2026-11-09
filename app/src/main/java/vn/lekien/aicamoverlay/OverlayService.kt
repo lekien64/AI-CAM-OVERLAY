@@ -5,6 +5,7 @@ import android.app.Service
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.view.Gravity
@@ -20,11 +21,19 @@ class OverlayService : Service() {
     private lateinit var params: WindowManager.LayoutParams
     private lateinit var panel: LinearLayout
 
+    private lateinit var content: LinearLayout
+    private lateinit var autoButton: TextView
+    private lateinit var manualButton: TextView
+    private lateinit var minimizeButton: TextView
+    private lateinit var opacityButton: TextView
+
     private var expanded = true
     private var opacityIndex = 0
     private var mode = "AUTO"
 
-    private val opacities = floatArrayOf(1f, 0.85f, 0.70f, 0.55f)
+    private val opacities = floatArrayOf(
+        1f, 0.85f, 0.70f, 0.55f
+    )
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -33,52 +42,46 @@ class OverlayService : Service() {
         flags: Int,
         startId: Int
     ): Int {
-        if (this::panel.isInitialized && panel.parent != null) {
-            return START_NOT_STICKY
+        if (!this::panel.isInitialized || panel.parent == null) {
+            showPanel()
         }
-
-        showPanel()
         return START_NOT_STICKY
     }
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
 
-    private fun glassBackground(): GradientDrawable {
-        return GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            cornerRadius = dp(22).toFloat()
-            setColor(Color.argb(225, 18, 29, 43))
-            setStroke(dp(1), Color.argb(110, 130, 205, 235))
-        }
+    private fun makeBackground(
+        color: Int,
+        strokeColor: Int = Color.TRANSPARENT
+    ) = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(18).toFloat()
+        setColor(color)
+        setStroke(dp(1), strokeColor)
     }
 
     private fun makeText(
         value: String,
         size: Float,
         color: Int
-    ): TextView {
-        return TextView(this).apply {
-            text = value
-            textSize = size
-            setTextColor(color)
-            gravity = Gravity.CENTER
-            setPadding(dp(12), dp(9), dp(12), dp(9))
-        }
+    ) = TextView(this).apply {
+        text = value
+        textSize = size
+        setTextColor(color)
+        gravity = Gravity.CENTER
+        setPadding(dp(12), dp(10), dp(12), dp(10))
     }
 
     private fun makeButton(
         value: String,
         onClick: () -> Unit
-    ): TextView {
-        return makeText(value, 13f, Color.WHITE).apply {
-            background = GradientDrawable().apply {
-                cornerRadius = dp(12).toFloat()
-                setColor(Color.argb(100, 70, 145, 190))
-                setStroke(dp(1), Color.argb(100, 150, 220, 255))
-            }
-            setOnClickListener { onClick() }
-        }
+    ) = makeText(value, 13f, Color.WHITE).apply {
+        background = makeBackground(
+            Color.argb(90, 65, 135, 185),
+            Color.argb(100, 150, 220, 255)
+        )
+        setOnClickListener { onClick() }
     }
 
     private fun showPanel() {
@@ -86,7 +89,10 @@ class OverlayService : Service() {
 
         panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = glassBackground()
+            background = makeBackground(
+                Color.argb(235, 18, 29, 43),
+                Color.argb(130, 130, 205, 235)
+            )
             setPadding(dp(10), dp(8), dp(10), dp(10))
         }
 
@@ -113,7 +119,7 @@ class OverlayService : Service() {
             Color.WHITE
         ).apply {
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
-            setTypeface(null, android.graphics.Typeface.BOLD)
+            setTypeface(null, Typeface.BOLD)
             layoutParams = LinearLayout.LayoutParams(
                 0,
                 dp(48),
@@ -121,15 +127,15 @@ class OverlayService : Service() {
             )
         }
 
-        val minimize = makeButton("−") {
+        minimizeButton = makeButton("−") {
             toggleExpanded()
         }
 
         header.addView(title)
-        header.addView(minimize)
+        header.addView(minimizeButton)
         panel.addView(header)
 
-        val content = LinearLayout(this).apply {
+        content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
 
@@ -144,26 +150,30 @@ class OverlayService : Service() {
             gravity = Gravity.CENTER
         }
 
-        val autoButton = makeButton("AUTO") {
+        autoButton = makeButton("AUTO") {
             mode = "AUTO"
-            updateMode(modeRow)
+            updateModeButtons()
         }
 
-        val manualButton = makeButton("MANUAL") {
+        manualButton = makeButton("MANUAL") {
             mode = "MANUAL"
-            updateMode(modeRow)
+            updateModeButtons()
         }
 
         modeRow.addView(
             autoButton,
-            LinearLayout.LayoutParams(0, dp(46), 1f).apply {
+            LinearLayout.LayoutParams(
+                0, dp(46), 1f
+            ).apply {
                 marginEnd = dp(5)
             }
         )
 
         modeRow.addView(
             manualButton,
-            LinearLayout.LayoutParams(0, dp(46), 1f).apply {
+            LinearLayout.LayoutParams(
+                0, dp(46), 1f
+            ).apply {
                 marginStart = dp(5)
             }
         )
@@ -174,11 +184,12 @@ class OverlayService : Service() {
             Color.LTGRAY
         )
 
-        val opacityButton = makeButton("ĐỘ TRONG SUỐT: 100%") {
+        opacityButton = makeButton(
+            "ĐỘ TRONG SUỐT: 100%"
+        ) {
             opacityIndex = (opacityIndex + 1) % opacities.size
             panel.alpha = opacities[opacityIndex]
-            (it as TextView).text =
-                "ĐỘ TRONG SUỐT: ${ (opacities[opacityIndex] * 100).toInt() }%"
+            updateOpacityText()
         }
 
         val closeButton = makeButton("ĐÓNG OVERLAY") {
@@ -193,7 +204,7 @@ class OverlayService : Service() {
 
         panel.addView(content)
 
-        header.setOnTouchListener(
+        title.setOnTouchListener(
             object : View.OnTouchListener {
                 private var startX = 0
                 private var startY = 0
@@ -222,38 +233,57 @@ class OverlayService : Service() {
                             wm.updateViewLayout(panel, params)
                             return true
                         }
+
+                        MotionEvent.ACTION_UP -> return true
                     }
-                    return false
+                    return true
                 }
             }
         )
 
+        updateModeButtons()
+        updateOpacityText()
+
         wm.addView(panel, params)
     }
 
-    private fun updateMode(row: LinearLayout) {
-        for (i in 0 until row.childCount) {
-            val button = row.getChildAt(i) as TextView
-            val selected = button.text.toString() == mode
+    private fun updateModeButtons() {
+        autoButton.alpha = if (mode == "AUTO") 1f else 0.55f
+        manualButton.alpha = if (mode == "MANUAL") 1f else 0.55f
 
-            button.alpha = if (selected) 1f else 0.55f
-        }
+        autoButton.setTypeface(
+            null,
+            if (mode == "AUTO") Typeface.BOLD else Typeface.NORMAL
+        )
+
+        manualButton.setTypeface(
+            null,
+            if (mode == "MANUAL") Typeface.BOLD else Typeface.NORMAL
+        )
+    }
+
+    private fun updateOpacityText() {
+        opacityButton.text =
+            "ĐỘ TRONG SUỐT: ${(opacities[opacityIndex] * 100).toInt()}%"
     }
 
     private fun toggleExpanded() {
         expanded = !expanded
 
-        val content = panel.getChildAt(1)
         content.visibility =
             if (expanded) View.VISIBLE else View.GONE
 
-        val header = panel.getChildAt(0) as LinearLayout
-        val button = header.getChildAt(1) as TextView
-        button.text = if (expanded) "−" else "+"
+        minimizeButton.text = if (expanded) "−" else "+"
+
+        panel.requestLayout()
+        wm.updateViewLayout(panel, params)
     }
 
     override fun onDestroy() {
-        if (this::panel.isInitialized && panel.parent != null) {
+        if (
+            this::panel.isInitialized &&
+            panel.parent != null
+        ) {
             wm.removeView(panel)
         }
         super.onDestroy()
