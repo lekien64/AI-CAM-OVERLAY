@@ -22,6 +22,12 @@ data class GuideDetection(
 
 class CompositionGuideView(context: Context) : View(context) {
 
+    companion object {
+        private const val MIN_CONFIDENCE = 0.30f
+        private const val DUPLICATE_IOU = 0.82f
+        private const val MAX_VISIBLE_DETECTIONS = 12
+    }
+
     var scene: String = "PHONG CẢNH"
         set(value) {
             field = value
@@ -297,14 +303,87 @@ class CompositionGuideView(context: Context) : View(context) {
         }
     }
 
-    private fun drawDetections(canvas: Canvas) {
-        detections.forEach { item ->
-            val left = item.left.coerceIn(0f, 1f) * width
-            val top = item.top.coerceIn(0f, 1f) * height
-            val right = item.right.coerceIn(0f, 1f) * width
-            val bottom = item.bottom.coerceIn(0f, 1f) * height
+    private fun filterDetections(): List<GuideDetection> {
+        val candidates = detections
+            .filter { item ->
+                item.confidence >= MIN_CONFIDENCE &&
+                    item.label.isNotBlank() &&
+                    !item.label.equals("Unknown", true) &&
+                    !item.label.equals("Đối tượng", true)
+            }
+            .mapNotNull { item ->
+                val left = item.left.coerceIn(0f, 1f)
+                val top = item.top.coerceIn(0f, 1f)
+                val right = item.right.coerceIn(0f, 1f)
+                val bottom = item.bottom.coerceIn(0f, 1f)
 
-            if (right <= left || bottom <= top) return@forEach
+                if (right <= left || bottom <= top) {
+                    null
+                } else {
+                    item.copy(
+                        left = left,
+                        top = top,
+                        right = right,
+                        bottom = bottom
+                    )
+                }
+            }
+            .sortedByDescending { it.confidence }
+
+        val accepted = mutableListOf<GuideDetection>()
+
+        for (candidate in candidates) {
+            val overlapsExisting = accepted.any { existing ->
+                intersectionOverUnion(candidate, existing) >= DUPLICATE_IOU
+            }
+
+            if (!overlapsExisting) {
+                accepted.add(candidate)
+            }
+
+            if (accepted.size >= MAX_VISIBLE_DETECTIONS) {
+                break
+            }
+        }
+
+        return accepted
+    }
+
+    private fun intersectionOverUnion(
+        first: GuideDetection,
+        second: GuideDetection
+    ): Float {
+        val left = max(first.left, second.left)
+        val top = max(first.top, second.top)
+        val right = min(first.right, second.right)
+        val bottom = min(first.bottom, second.bottom)
+
+        val intersectionWidth = max(0f, right - left)
+        val intersectionHeight = max(0f, bottom - top)
+        val intersection = intersectionWidth * intersectionHeight
+
+        val firstArea =
+            (first.right - first.left) * (first.bottom - first.top)
+
+        val secondArea =
+            (second.right - second.left) * (second.bottom - second.top)
+
+        val union = firstArea + secondArea - intersection
+
+        return if (union > 0f) intersection / union else 0f
+    }
+
+    private fun drawDetections(canvas: Canvas) {
+        val visibleDetections = filterDetections()
+        val save = canvas.save()
+
+        canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
+
+        visibleDetections.forEach { item ->
+            val left = item.left * width
+            val top = item.top * height
+            val right = item.right * width
+            val bottom = item.bottom * height
 
             val box = RectF(left, top, right, bottom)
 
@@ -330,8 +409,14 @@ class CompositionGuideView(context: Context) : View(context) {
                 max(0f, width - labelWidth)
             )
 
-            val labelTop = (top - labelHeight)
-                .coerceAtLeast(0f)
+            val labelTop = if (top >= labelHeight) {
+                top - labelHeight
+            } else {
+                min(
+                    height - labelHeight,
+                    bottom
+                ).coerceAtLeast(0f)
+            }
 
             val labelRect = RectF(
                 labelLeft,
@@ -354,6 +439,8 @@ class CompositionGuideView(context: Context) : View(context) {
                 labelPaint
             )
         }
+
+        canvas.restoreToCount(save)
     }
 
     private fun toVietnamese(source: String): String {
@@ -369,7 +456,7 @@ class CompositionGuideView(context: Context) : View(context) {
             "furniture" -> "Nội thất"
             "electronic device" -> "Thiết bị điện tử"
             "unknown" -> "Đối tượng"
-            else -> "Đối tượng"
+            else -> source
         }
     }
 }
