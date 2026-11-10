@@ -167,8 +167,6 @@ class OverlayService : Service() {
         setOnClickListener { action() }
     }
 
-    // Tạo cửa sổ hướng dẫn trước bảng điều khiển.
-    // FLAG_NOT_TOUCHABLE giúp Camera vẫn nhận thao tác chạm.
     private fun createGuideWindow() {
         guideView = CompositionGuideView(this).apply {
             visibility = View.GONE
@@ -216,11 +214,10 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = dp(24)
-            y = dp(180)
+            x = dp(16)
+            y = dp(40)
         }
 
-        // Thêm sau guideView để bảng điều khiển nằm phía trên.
         wm.addView(container, params)
     }
 
@@ -248,7 +245,7 @@ class OverlayService : Service() {
 
             layoutParams = LinearLayout.LayoutParams(
                 0,
-                dp(46),
+                dp(42),
                 1f
             )
         }
@@ -285,15 +282,15 @@ class OverlayService : Service() {
 
         row.addView(
             auto,
-            LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                marginEnd = dp(5)
+            LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+                marginEnd = dp(4)
             }
         )
 
         row.addView(
             manual,
-            LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                marginStart = dp(5)
+            LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+                marginStart = dp(4)
             }
         )
 
@@ -321,7 +318,7 @@ class OverlayService : Service() {
 
             val choice = TextView(this).apply {
                 text = if (selected) "✓  $scene" else scene
-                textSize = 13f
+                textSize = 12f
                 gravity = Gravity.CENTER
 
                 setTextColor(
@@ -335,7 +332,7 @@ class OverlayService : Service() {
                 typeface = Typeface.DEFAULT_BOLD
                 background = pillBackground(selected)
 
-                setPadding(dp(12), dp(9), dp(12), dp(9))
+                setPadding(dp(8), dp(6), dp(8), dp(6))
 
                 setOnClickListener {
                     selectedScene = scene
@@ -348,9 +345,9 @@ class OverlayService : Service() {
                 choice,
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
-                    dp(40)
+                    dp(36)
                 ).apply {
-                    bottomMargin = dp(6)
+                    bottomMargin = dp(4)
                 }
             )
         }
@@ -363,7 +360,7 @@ class OverlayService : Service() {
             orientation = LinearLayout.VERTICAL
         }
 
-        opacityText = text("", 11f)
+        opacityText = text("", 10f)
 
         val slider = SeekBar(this).apply {
             max = 90
@@ -408,7 +405,7 @@ class OverlayService : Service() {
 
         val closeButton = TextView(this).apply {
             text = "×"
-            textSize = 24f
+            textSize = 22f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
             background = closeBackground()
@@ -418,11 +415,11 @@ class OverlayService : Service() {
             }
 
             layoutParams = LinearLayout.LayoutParams(
-                dp(42),
-                dp(42)
+                dp(38),
+                dp(38)
             ).apply {
                 gravity = Gravity.END
-                topMargin = dp(5)
+                topMargin = dp(3)
             }
         }
 
@@ -443,18 +440,20 @@ class OverlayService : Service() {
         }
 
         panel.background = glassBackground()
-        panel.setPadding(dp(10), dp(8), dp(10), dp(10))
+        panel.setPadding(dp(8), dp(6), dp(8), dp(8))
 
         if (isLandscape) {
+            // Giới hạn kích thước bảng ngang.
+            // Khi xoay 90 độ, chiều dài này trở thành chiều cao cửa sổ.
             val density = resources.displayMetrics.density
 
             val availableLongSide =
                 (resources.displayMetrics.heightPixels / density).toInt()
 
             val contentWidth = min(
-                availableLongSide - 48,
-                560
-            ).coerceAtLeast(300)
+                availableLongSide - 40,
+                360
+            ).coerceAtLeast(260)
 
             panel.orientation = LinearLayout.HORIZONTAL
 
@@ -464,11 +463,11 @@ class OverlayService : Service() {
 
             val right = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(8), 0, 0, 0)
+                setPadding(dp(4), 0, 0, 0)
             }
 
             left.addView(createHeader())
-            left.addView(text("AI CAMERA • FLOW GLASS", 9f))
+            left.addView(text("AI CAMERA • FLOW GLASS", 8f))
             left.addView(createModeRow())
 
             if (mode == "MANUAL") {
@@ -501,7 +500,7 @@ class OverlayService : Service() {
                     View.MeasureSpec.EXACTLY
                 ),
                 View.MeasureSpec.makeMeasureSpec(
-                    resources.displayMetrics.heightPixels,
+                    dp(420),
                     View.MeasureSpec.AT_MOST
                 )
             )
