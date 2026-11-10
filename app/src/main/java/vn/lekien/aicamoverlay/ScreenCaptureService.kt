@@ -29,6 +29,12 @@ class ScreenCaptureService : Service() {
         private const val TAG = "AICAM_ScreenCapture"
         private const val CHANNEL_ID = "ai_cam_screen_capture"
         private const val NOTIFICATION_ID = 4102
+
+        private const val EXTRA_IMAGE_WIDTH = "imageWidth"
+        private const val EXTRA_IMAGE_HEIGHT = "imageHeight"
+        private const val EXTRA_FRAME_NUMBER = "frameNumber"
+        private const val EXTRA_AI_ERROR = "aiError"
+        private const val EXTRA_AI_MESSAGE = "aiMessage"
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -41,6 +47,7 @@ class ScreenCaptureService : Service() {
     private var aiVisionEngine: AiVisionEngine? = null
 
     private var firstFrameLogged = false
+    private var capturedFrameCount = 0L
     private var analyzedFrameCount = 0L
 
     private val projectionCallback =
@@ -59,13 +66,15 @@ class ScreenCaptureService : Service() {
             ) {
                 analyzedFrameCount++
 
-                Log.d(
-                    TAG,
-                    "AI FRAME #$analyzedFrameCount | " +
-                        "${result.imageWidth}x${result.imageHeight} | " +
-                        "Thời gian: ${result.analysisTimeMs}ms | " +
-                        "Số đối tượng: ${result.detections.size}"
-                )
+                val objectCount = result.detections.size
+
+                val message =
+                    "Khung #${result.frameNumber} • " +
+                    "${result.imageWidth}x${result.imageHeight} • " +
+                    "$objectCount đối tượng • " +
+                    "${result.analysisTimeMs}ms"
+
+                Log.d(TAG, "AI RESULT: $message")
 
                 val labels = ArrayList<String>()
                 val confidences = ArrayList<Float>()
@@ -92,12 +101,21 @@ class ScreenCaptureService : Service() {
                     labels = labels,
                     confidences = confidences,
                     boxes = boxes,
-                    analysisTime = result.analysisTimeMs
+                    analysisTime = result.analysisTimeMs,
+                    imageWidth = result.imageWidth,
+                    imageHeight = result.imageHeight,
+                    frameNumber = result.frameNumber,
+                    message = message
                 )
             }
 
             override fun onError(error: Exception) {
+                val message = error.message
+                    ?: error.javaClass.simpleName
+
                 Log.e(TAG, "AI Vision phân tích thất bại", error)
+
+                sendAiError(message)
             }
         }
 
@@ -132,6 +150,7 @@ class ScreenCaptureService : Service() {
             projectionData == null
         ) {
             Log.e(TAG, "Thiếu dữ liệu cấp quyền MediaProjection")
+            sendAiError("Thiếu quyền MediaProjection")
             stopSelf()
             return START_NOT_STICKY
         }
@@ -143,6 +162,7 @@ class ScreenCaptureService : Service() {
             startScreenCapture(resultCode, projectionData)
         } catch (e: Exception) {
             Log.e(TAG, "Không thể khởi chạy chụp màn hình", e)
+            sendAiError("Không khởi chạy được: ${e.message}")
             stopSelf()
         }
 
@@ -266,13 +286,19 @@ class ScreenCaptureService : Service() {
         )
 
         Log.d(TAG, "AI Vision Engine đã kết nối")
+
+        sendAiError("Đang chờ khung hình đầu tiên")
     }
 
     private fun sendAiResult(
         labels: ArrayList<String>,
         confidences: ArrayList<Float>,
         boxes: ArrayList<Float>,
-        analysisTime: Long
+        analysisTime: Long,
+        imageWidth: Int,
+        imageHeight: Int,
+        frameNumber: Long,
+        message: String
     ) {
         val confidenceArray = FloatArray(confidences.size) {
             confidences[it]
@@ -311,9 +337,31 @@ class ScreenCaptureService : Service() {
                 OverlayService.EXTRA_DETECTION_COUNT,
                 labels.size
             )
+
+            putExtra(EXTRA_IMAGE_WIDTH, imageWidth)
+            putExtra(EXTRA_IMAGE_HEIGHT, imageHeight)
+            putExtra(EXTRA_FRAME_NUMBER, frameNumber)
+            putExtra(EXTRA_AI_MESSAGE, message)
+            putExtra(EXTRA_AI_ERROR, "")
         }
 
         sendBroadcast(resultIntent)
+    }
+
+    private fun sendAiError(message: String) {
+        val errorIntent = Intent(
+            OverlayService.ACTION_AI_RESULT
+        ).apply {
+            setPackage(packageName)
+            putStringArrayListExtra(
+                OverlayService.EXTRA_LABELS,
+                arrayListOf()
+            )
+            putExtra(EXTRA_AI_ERROR, message)
+            putExtra(EXTRA_AI_MESSAGE, "Lỗi: $message")
+        }
+
+        sendBroadcast(errorIntent)
     }
 
     private fun processLatestFrame(reader: ImageReader) {
@@ -322,20 +370,35 @@ class ScreenCaptureService : Service() {
             reader.acquireLatestImage()
         } catch (error: Exception) {
             Log.e(TAG, "Không lấy được khung hình", error)
+            sendAiError("Không lấy được khung hình: ${error.message}")
             null
         } ?: return
 
         try {
+            capturedFrameCount++
+
             if (!firstFrameLogged) {
                 Log.d(
                     TAG,
-                    "Đã nhận khung hình: " +
+                    "Đã nhận khung hình đầu tiên: " +
                         "${image.width} x ${image.height}"
                 )
                 firstFrameLogged = true
             }
 
-            val bitmap = imageToBitmap(image) ?: return
+            if (capturedFrameCount % 30L == 0L) {
+                Log.d(
+                    TAG,
+                    "Đã thu được $capturedFrameCount khung hình"
+                )
+            }
+
+            val bitmap = imageToBitmap(image)
+
+            if (bitmap == null) {
+                sendAiError("Không chuyển được Image thành Bitmap")
+                return
+            }
 
             aiVisionEngine?.analyze(
                 bitmap = bitmap,
@@ -345,19 +408,17 @@ class ScreenCaptureService : Service() {
                 if (!bitmap.isRecycled) {
                     bitmap.recycle()
                 }
+                sendAiError("AI Vision Engine chưa sẵn sàng")
             }
 
         } catch (error: Exception) {
             Log.e(TAG, "Lỗi xử lý khung hình", error)
+            sendAiError("Lỗi xử lý ảnh: ${error.message}")
         } finally {
             image.close()
         }
     }
 
-    /**
-     * Chuyển Image RGBA_8888 thành Bitmap.
-     * Xử lý rowStride và pixelStride để tránh lệch ảnh.
-     */
     private fun imageToBitmap(image: Image): Bitmap? {
 
         val plane = image.planes.firstOrNull() ?: return null
