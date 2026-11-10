@@ -143,7 +143,7 @@ class CompositionGuideView(context: Context) : View(context) {
         canvas.drawOval(face, softPaint)
 
         // Đường mắt.
-        val eyeY = face.top + face.height * 0.42f
+        val eyeY = face.top + face.height() * 0.42f
         canvas.drawLine(
             face.left - dp(8f),
             eyeY,
