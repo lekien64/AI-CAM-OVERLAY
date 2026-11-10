@@ -4,6 +4,7 @@ package vn.lekien.aicamoverlay
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.SystemClock
+import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.objects.ObjectDetection
 import com.google.mlkit.vision.objects.ObjectDetector
@@ -12,16 +13,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 import kotlin.math.min
 
-/**
- * AI Vision Prototype 02
- *
- * - Phân tích khung hình ngay trên thiết bị.
- * - Nhận diện và phân loại đối tượng.
- * - Trả về tọa độ đối tượng đã chuẩn hóa.
- * - Tự giải phóng Bitmap sau khi xử lý.
- *
- * Hình ảnh không được gửi lên máy chủ.
- */
 class AiVisionEngine {
 
     data class Detection(
@@ -39,7 +30,8 @@ class AiVisionEngine {
         val imageWidth: Int,
         val imageHeight: Int,
         val detections: List<Detection>,
-        val analysisTimeMs: Long
+        val analysisTimeMs: Long,
+        val frameNumber: Long
     )
 
     interface Listener {
@@ -48,7 +40,9 @@ class AiVisionEngine {
     }
 
     companion object {
+        private const val TAG = "AICAM_VISION"
         private const val MIN_FRAME_INTERVAL_MS = 900L
+        private const val MAX_DETECTIONS = 10
 
         const val CATEGORY_FOOD = "Food"
         const val CATEGORY_PLANT = "Plant"
@@ -64,6 +58,7 @@ class AiVisionEngine {
     private var closed = false
 
     private var lastFrameTime = 0L
+    private var frameCounter = 0L
 
     private val detector: ObjectDetector
 
@@ -71,15 +66,14 @@ class AiVisionEngine {
         val options = ObjectDetectorOptions.Builder()
             .setDetectorMode(ObjectDetectorOptions.STREAM_MODE)
             .enableClassification()
+            .enableMultipleObjects()
             .build()
 
         detector = ObjectDetection.getClient(options)
+
+        Log.d(TAG, "Object Detector đã khởi tạo")
     }
 
-    /**
-     * Engine nhận quyền sở hữu Bitmap.
-     * Bitmap sẽ được recycle khi xử lý xong hoặc bị bỏ qua.
-     */
     fun analyze(
         bitmap: Bitmap,
         rotationDegrees: Int = 0,
@@ -114,8 +108,17 @@ class AiVisionEngine {
         }
 
         lastFrameTime = now
+        frameCounter++
 
+        val currentFrame = frameCounter
+        val imageWidth = bitmap.width
+        val imageHeight = bitmap.height
         val startTime = SystemClock.elapsedRealtime()
+
+        Log.d(
+            TAG,
+            "FRAME #$currentFrame | ${imageWidth}x${imageHeight}"
+        )
 
         try {
             val input = InputImage.fromBitmap(
@@ -128,57 +131,74 @@ class AiVisionEngine {
 
                     if (closed) return@addOnSuccessListener
 
-                    val detections = objects.mapNotNull { detected ->
+                    val detections = objects
+                        .take(MAX_DETECTIONS)
+                        .mapNotNull { detected ->
 
-                        val bounds = detected.boundingBox
+                            val bounds = detected.boundingBox
 
-                        if (bounds.width() <= 0 ||
-                            bounds.height() <= 0
-                        ) {
-                            return@mapNotNull null
-                        }
+                            if (bounds.width() <= 0 ||
+                                bounds.height() <= 0
+                            ) {
+                                return@mapNotNull null
+                            }
 
-                        val labelInfo = detected.labels
-                            .maxByOrNull { it.confidence }
+                            val labelInfo = detected.labels
+                                .maxByOrNull { it.confidence }
 
-                        val label = labelInfo?.text
-                            ?: CATEGORY_UNKNOWN
+                            val label = labelInfo?.text
+                                ?: CATEGORY_UNKNOWN
 
-                        val confidence = labelInfo?.confidence ?: 0f
+                            val confidence =
+                                labelInfo?.confidence ?: 0f
 
-                        Detection(
-                            label = label,
-                            confidence = confidence,
-                            trackingId = detected.trackingId,
-                            bounds = Rect(bounds),
-                            normalizedLeft = normalize(
-                                bounds.left.toFloat() / bitmap.width
-                            ),
-                            normalizedTop = normalize(
-                                bounds.top.toFloat() / bitmap.height
-                            ),
-                            normalizedRight = normalize(
-                                bounds.right.toFloat() / bitmap.width
-                            ),
-                            normalizedBottom = normalize(
-                                bounds.bottom.toFloat() / bitmap.height
+                            Detection(
+                                label = label,
+                                confidence = confidence,
+                                trackingId = detected.trackingId,
+                                bounds = Rect(bounds),
+                                normalizedLeft = normalize(
+                                    bounds.left.toFloat() / imageWidth
+                                ),
+                                normalizedTop = normalize(
+                                    bounds.top.toFloat() / imageHeight
+                                ),
+                                normalizedRight = normalize(
+                                    bounds.right.toFloat() / imageWidth
+                                ),
+                                normalizedBottom = normalize(
+                                    bounds.bottom.toFloat() / imageHeight
+                                )
                             )
-                        )
-                    }
+                        }
 
                     val elapsed =
                         SystemClock.elapsedRealtime() - startTime
 
+                    Log.d(
+                        TAG,
+                        "RESULT #$currentFrame | " +
+                            "objects=${detections.size} | " +
+                            "time=${elapsed}ms"
+                    )
+
                     listener.onResult(
                         AnalysisResult(
-                            imageWidth = bitmap.width,
-                            imageHeight = bitmap.height,
+                            imageWidth = imageWidth,
+                            imageHeight = imageHeight,
                             detections = detections,
-                            analysisTimeMs = elapsed
+                            analysisTimeMs = elapsed,
+                            frameNumber = currentFrame
                         )
                     )
                 }
                 .addOnFailureListener { error ->
+                    Log.e(
+                        TAG,
+                        "ML KIT ERROR | FRAME #$currentFrame",
+                        error
+                    )
+
                     if (!closed) {
                         listener.onError(error)
                     }
@@ -191,6 +211,8 @@ class AiVisionEngine {
         } catch (error: Exception) {
             recycleSafely(bitmap)
             busy.set(false)
+
+            Log.e(TAG, "Không thể phân tích Bitmap", error)
 
             if (!closed) {
                 listener.onError(error)
@@ -222,5 +244,7 @@ class AiVisionEngine {
 
         closed = true
         detector.close()
+
+        Log.d(TAG, "Object Detector đã đóng")
     }
 }
