@@ -47,9 +47,9 @@ class OverlayService : Service() {
                 if (degrees == ORIENTATION_UNKNOWN) return
 
                 val angle = when (degrees) {
-                    in 45..134 -> 90f
+                    in 45..134 -> 270f
                     in 135..224 -> 180f
-                    in 225..314 -> 270f
+                    in 225..314 -> 90f
                     else -> 0f
                 }
 
