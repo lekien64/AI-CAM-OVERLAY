@@ -2,27 +2,52 @@
 package vn.lekien.aicamoverlay
 
 import android.app.Activity
+import android.app.AppOpsManager
 import android.content.Intent
-import android.media.projection.MediaProjectionManager
-import android.os.Bundle
-import android.net.Uri
-import android.provider.Settings
+import android.content.SharedPreferences
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.os.Bundle
+import android.os.Process
+import android.provider.Settings
 import android.view.Gravity
 import android.widget.LinearLayout
 import android.widget.TextView
 
 class MainActivity : Activity() {
 
+    companion object {
+        private const val PREFS = "ai_cam_setup"
+        private const val KEY_SETUP_DONE = "setup_done"
+        private const val REQ_OVERLAY = 5101
+        private const val REQ_USAGE = 5102
+        private const val REQ_PROJECTION = 5103
+    }
+
     private lateinit var status: TextView
+    private lateinit var prefs: SharedPreferences
 
-    private val projectionRequestCode = 4101
+    private var permissionFlowStarted = false
+    private var waitingForOverlay = false
+    private var waitingForUsage = false
 
-    private fun dp(v: Int): Int =
-        (v * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    private fun hasUsageAccess(): Boolean {
+        val appOps =
+            getSystemService(APP_OPS_SERVICE) as AppOpsManager
+
+        return appOps.checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            packageName
+        ) == AppOpsManager.MODE_ALLOWED
+    }
 
     private fun glassBackground(radius: Int) =
         GradientDrawable(
@@ -64,6 +89,9 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+
         buildScreen()
     }
 
@@ -75,7 +103,6 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-
             setPadding(
                 dp(if (landscape) 32 else 24),
                 dp(24),
@@ -99,7 +126,6 @@ class MainActivity : Activity() {
             } else {
                 LinearLayout.VERTICAL
             }
-
             gravity = Gravity.CENTER
             setPadding(dp(20), dp(24), dp(20), dp(24))
             background = glassBackground(30)
@@ -138,24 +164,16 @@ class MainActivity : Activity() {
             setPadding(dp(8), dp(12), dp(8), dp(20))
         }
 
-        val permissionButton = pill("CẤP QUYỀN OVERLAY") {
-            val intent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")
-            )
-            startActivity(intent)
+        val overlayButton = pill("CẤP QUYỀN OVERLAY") {
+            openOverlaySettings()
+        }
+
+        val usageButton = pill("CẤP QUYỀN THEO DÕI ỨNG DỤNG") {
+            openUsageSettings()
         }
 
         val startButton = pill("BẬT AI CAM OVERLAY") {
-            if (!Settings.canDrawOverlays(this@MainActivity)) {
-                status.text = "Vui lòng cấp quyền Overlay trước"
-                return@pill
-            }
-
-            startService(
-                Intent(this@MainActivity, OverlayService::class.java)
-            )
-            status.text = "Đang bật lớp phủ AI CAM"
+            startAiCam()
         }
 
         val smartFrameButton = pill("BẬT SMART FRAME") {
@@ -163,27 +181,20 @@ class MainActivity : Activity() {
         }
 
         val stopButton = pill("TẮT AI CAM OVERLAY") {
-            stopService(
-                Intent(this@MainActivity, ScreenCaptureService::class.java)
-            )
-
-            stopService(
-                Intent(this@MainActivity, OverlayService::class.java)
-            )
-
-            status.text = "Đã yêu cầu dừng AI CAM và Smart Frame"
+            stopAllServices()
         }
 
         info.addView(title)
         info.addView(subtitle)
         info.addView(status)
 
-        for (button in listOf(
-            permissionButton,
+        listOf(
+            overlayButton,
+            usageButton,
             startButton,
             smartFrameButton,
             stopButton
-        )) {
+        ).forEach { button ->
             controls.addView(
                 button,
                 LinearLayout.LayoutParams(
@@ -198,43 +209,80 @@ class MainActivity : Activity() {
         if (landscape) {
             glass.addView(
                 info,
-                LinearLayout.LayoutParams(
-                    0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1f
-                )
+                LinearLayout.LayoutParams(0, -2, 1f)
             )
-
             glass.addView(
                 controls,
-                LinearLayout.LayoutParams(
-                    0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1f
-                )
+                LinearLayout.LayoutParams(0, -2, 1f)
             )
         } else {
             glass.addView(info)
-
             glass.addView(
                 controls,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
+                LinearLayout.LayoutParams(-1, -2)
             )
         }
 
         root.addView(
             glass,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            LinearLayout.LayoutParams(-1, -2)
         )
 
         setContentView(root)
         updateStatus()
+    }
+
+    private fun openOverlaySettings() {
+        if (Settings.canDrawOverlays(this)) {
+            continuePermissionFlow()
+            return
+        }
+
+        waitingForOverlay = true
+
+        val intent = Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:$packageName")
+        )
+
+        startActivityForResult(intent, REQ_OVERLAY)
+    }
+
+    private fun openUsageSettings() {
+        if (hasUsageAccess()) {
+            continuePermissionFlow()
+            return
+        }
+
+        waitingForUsage = true
+
+        startActivityForResult(
+            Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS),
+            REQ_USAGE
+        )
+    }
+
+    private fun continuePermissionFlow() {
+        if (isFinishing) return
+
+        if (!Settings.canDrawOverlays(this)) {
+            status.text = "Vui lòng bật quyền hiển thị trên ứng dụng khác"
+            return
+        }
+
+        if (!hasUsageAccess()) {
+            status.text = "Vui lòng bật quyền truy cập dữ liệu sử dụng"
+            openUsageSettings()
+            return
+        }
+
+        if (prefs.getBoolean(KEY_SETUP_DONE, false)) {
+            status.text = "Đã hoàn tất thiết lập quyền"
+            return
+        }
+
+        status.text = "Đang yêu cầu quyền Smart Frame..."
+        requestScreenCapture()
     }
 
     private fun requestScreenCapture() {
@@ -244,11 +292,43 @@ class MainActivity : Activity() {
 
         startActivityForResult(
             manager.createScreenCaptureIntent(),
-            projectionRequestCode
+            REQ_PROJECTION
         )
     }
 
-    @Deprecated("Using activity result for MediaProjection permission")
+    private fun startAiCam() {
+        if (!Settings.canDrawOverlays(this)) {
+            status.text = "Cần cấp quyền Overlay trước"
+            openOverlaySettings()
+            return
+        }
+
+        if (!hasUsageAccess()) {
+            status.text = "Cần cấp quyền Usage Access trước"
+            openUsageSettings()
+            return
+        }
+
+        startService(
+            Intent(this, OverlayService::class.java)
+        )
+
+        status.text = "AI CAM OVERLAY đang hoạt động"
+    }
+
+    private fun stopAllServices() {
+        stopService(
+            Intent(this, ScreenCaptureService::class.java)
+        )
+
+        stopService(
+            Intent(this, OverlayService::class.java)
+        )
+
+        status.text = "Đã tắt AI CAM OVERLAY và Smart Frame"
+    }
+
+    @Deprecated("Activity result required for system permission screens")
     override fun onActivityResult(
         requestCode: Int,
         resultCode: Int,
@@ -256,28 +336,66 @@ class MainActivity : Activity() {
     ) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode != projectionRequestCode) return
-
-        if (resultCode == RESULT_OK && data != null) {
-            val serviceIntent = Intent(
-                this,
-                ScreenCaptureService::class.java
-            ).apply {
-                putExtra("resultCode", resultCode)
-                putExtra("projectionData", data)
+        when (requestCode) {
+            REQ_OVERLAY -> {
+                waitingForOverlay = false
+                if (Settings.canDrawOverlays(this)) {
+                    continuePermissionFlow()
+                } else {
+                    status.text = "Bạn chưa cấp quyền Overlay"
+                }
             }
 
-            startForegroundService(serviceIntent)
+            REQ_USAGE -> {
+                waitingForUsage = false
+                if (hasUsageAccess()) {
+                    continuePermissionFlow()
+                } else {
+                    status.text = "Bạn chưa cấp quyền Usage Access"
+                }
+            }
 
-            status.text = "Đã cấp quyền Smart Frame"
-        } else {
-            status.text = "Bạn chưa cấp quyền chụp màn hình"
+            REQ_PROJECTION -> {
+                if (resultCode == RESULT_OK && data != null) {
+                    val serviceIntent = Intent(
+                        this,
+                        ScreenCaptureService::class.java
+                    ).apply {
+                        putExtra("resultCode", resultCode)
+                        putExtra("projectionData", data)
+                    }
+
+                    startForegroundService(serviceIntent)
+
+                    startAiCam()
+
+                    prefs.edit()
+                        .putBoolean(KEY_SETUP_DONE, true)
+                        .apply()
+
+                    status.text = "Thiết lập hoàn tất. AI CAM đã bật."
+                } else {
+                    status.text = "Bạn chưa cấp quyền Smart Frame"
+                }
+            }
         }
+
+        updateStatus()
     }
 
     override fun onResume() {
         super.onResume()
-        if (::status.isInitialized) updateStatus()
+
+        if (::status.isInitialized) {
+            updateStatus()
+
+            if (!prefs.getBoolean(KEY_SETUP_DONE, false) &&
+                !permissionFlowStarted
+            ) {
+                permissionFlowStarted = true
+                continuePermissionFlow()
+            }
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -286,10 +404,10 @@ class MainActivity : Activity() {
     }
 
     private fun updateStatus() {
-        status.text = if (Settings.canDrawOverlays(this)) {
-            "Quyền Overlay: ĐÃ CẤP"
-        } else {
-            "Quyền Overlay: CHƯA CẤP"
-        }
+        if (!::status.isInitialized) return
+
+        status.text =
+            "Overlay: ${if (Settings.canDrawOverlays(this)) "ĐÃ CẤP" else "CHƯA CẤP"}\n" +
+            "Usage Access: ${if (hasUsageAccess()) "ĐÃ CẤP" else "CHƯA CẤP"}"
     }
 }
