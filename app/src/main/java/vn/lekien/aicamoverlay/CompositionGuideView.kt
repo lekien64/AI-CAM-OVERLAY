@@ -17,6 +17,8 @@ class CompositionGuideView(context: Context) : View(context) {
             invalidate()
         }
 
+    // Giữ thuộc tính để tương thích với OverlayService.
+    // Bố cục thực tế được xác định bằng kích thước View.
     var isLandscape: Boolean = false
         set(value) {
             field = value
@@ -26,13 +28,15 @@ class CompositionGuideView(context: Context) : View(context) {
     private val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(190, 255, 255, 255)
         style = Paint.Style.STROKE
-        strokeWidth = dp(1.4f)
+        strokeWidth = dp(1.3f)
     }
 
     private val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(145, 190, 235, 205)
         style = Paint.Style.STROKE
-        strokeWidth = dp(1.5f)
+        strokeWidth = dp(1.4f)
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
     }
 
     private val pointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -53,28 +57,27 @@ class CompositionGuideView(context: Context) : View(context) {
 
         if (width <= 0 || height <= 0) return
 
-        /*
-         * Vùng preview căn theo giao diện Camera Xiaomi.
-         * Không sử dụng toàn bộ màn hình.
-         *
-         * Dọc: tránh thanh công cụ trên và vùng nút chụp dưới.
-         * Ngang: chừa vùng an toàn ở cạnh phải cho điều khiển camera.
-         */
+        // Dựa vào kích thước giao diện thực tế,
+        // không dựa vào góc xoay vật lý của điện thoại.
+        val landscapeLayout = width > height
+
         val left: Float
         val top: Float
         val right: Float
         val bottom: Float
 
-        if (isLandscape) {
+        if (landscapeLayout) {
             left = width * 0.06f
             right = width * 0.84f
             top = height * 0.10f
             bottom = height * 0.90f
         } else {
+            // Vùng xem trước Camera Xiaomi ở chiều dọc.
+            // Chừa thanh trên và khu vực điều khiển phía dưới.
             left = width * 0.08f
             right = width * 0.92f
-            top = height * 0.14f
-            bottom = height * 0.74f
+            top = height * 0.19f
+            bottom = height * 0.75f
         }
 
         val safeArea = RectF(left, top, right, bottom)
@@ -83,17 +86,9 @@ class CompositionGuideView(context: Context) : View(context) {
         canvas.clipRect(safeArea)
 
         when (scene) {
-            "PHONG CẢNH" -> drawLandscape(
-                canvas, safeArea
-            )
-
-            "CHÂN DUNG" -> drawPortrait(
-                canvas, safeArea
-            )
-
-            "TẠO DÁNG" -> drawPose(
-                canvas, safeArea
-            )
+            "PHONG CẢNH" -> drawLandscape(canvas, safeArea)
+            "CHÂN DUNG" -> drawPortrait(canvas, safeArea)
+            "TẠO DÁNG" -> drawPose(canvas, safeArea)
         }
 
         canvas.restoreToCount(save)
@@ -128,10 +123,10 @@ class CompositionGuideView(context: Context) : View(context) {
         canvas.drawLine(left, y1, right, y1, guidePaint)
         canvas.drawLine(left, y2, right, y2, guidePaint)
 
-        canvas.drawCircle(x1, y1, dp(4f), pointPaint)
-        canvas.drawCircle(x2, y1, dp(4f), pointPaint)
-        canvas.drawCircle(x1, y2, dp(4f), pointPaint)
-        canvas.drawCircle(x2, y2, dp(4f), pointPaint)
+        canvas.drawCircle(x1, y1, dp(3.5f), pointPaint)
+        canvas.drawCircle(x2, y1, dp(3.5f), pointPaint)
+        canvas.drawCircle(x1, y2, dp(3.5f), pointPaint)
+        canvas.drawCircle(x2, y2, dp(3.5f), pointPaint)
     }
 
     private fun drawPortrait(
@@ -142,8 +137,9 @@ class CompositionGuideView(context: Context) : View(context) {
         val height = area.height()
         val centerX = area.centerX()
 
-        val faceWidth = width * 0.34f
-        val faceHeight = height * 0.28f
+        // Khung khuôn mặt gọn hơn, đặt ở 1/3 phía trên.
+        val faceWidth = width * 0.31f
+        val faceHeight = height * 0.24f
         val faceTop = area.top + height * 0.10f
 
         val face = RectF(
@@ -155,40 +151,46 @@ class CompositionGuideView(context: Context) : View(context) {
 
         canvas.drawOval(face, guidePaint)
 
+        // Đường ngang định vị mắt.
         val eyeY = face.top + face.height() * 0.42f
 
         canvas.drawLine(
-            face.left - dp(7f),
+            face.left - dp(6f),
             eyeY,
-            face.right + dp(7f),
+            face.right + dp(6f),
             eyeY,
             framePaint
         )
 
+        // Khung vai và thân trên thu gọn.
         val shoulderPath = Path().apply {
-            moveTo(centerX - width * 0.34f, area.bottom)
-
-            cubicTo(
-                centerX - width * 0.32f,
-                face.bottom + height * 0.05f,
-                centerX - width * 0.20f,
-                face.bottom + height * 0.04f,
-                centerX,
-                face.bottom + height * 0.04f
+            moveTo(
+                centerX - width * 0.29f,
+                area.bottom
             )
 
             cubicTo(
-                centerX + width * 0.20f,
-                face.bottom + height * 0.04f,
-                centerX + width * 0.32f,
-                face.bottom + height * 0.05f,
-                centerX + width * 0.34f,
+                centerX - width * 0.27f,
+                face.bottom + height * 0.09f,
+                centerX - width * 0.18f,
+                face.bottom + height * 0.06f,
+                centerX,
+                face.bottom + height * 0.06f
+            )
+
+            cubicTo(
+                centerX + width * 0.18f,
+                face.bottom + height * 0.06f,
+                centerX + width * 0.27f,
+                face.bottom + height * 0.09f,
+                centerX + width * 0.29f,
                 area.bottom
             )
         }
 
         canvas.drawPath(shoulderPath, framePaint)
 
+        // Trục căn giữa khuôn mặt.
         canvas.drawLine(
             centerX,
             area.top,
@@ -208,21 +210,27 @@ class CompositionGuideView(context: Context) : View(context) {
 
         canvas.drawRoundRect(
             area,
-            dp(18f),
-            dp(18f),
+            dp(15f),
+            dp(15f),
             framePaint
         )
 
+        // Tỷ lệ hình người được thu gọn để nằm trong preview.
         val headY = area.top + height * 0.13f
         val neckY = area.top + height * 0.23f
         val shoulderY = area.top + height * 0.30f
-        val hipY = area.top + height * 0.59f
-        val kneeY = area.top + height * 0.79f
+        val hipY = area.top + height * 0.57f
+        val kneeY = area.top + height * 0.77f
         val footY = area.bottom - height * 0.04f
 
-        val headRadius = width * 0.075f
+        val headRadius = width * 0.065f
 
-        canvas.drawCircle(cx, headY, headRadius, guidePaint)
+        canvas.drawCircle(
+            cx,
+            headY,
+            headRadius,
+            guidePaint
+        )
 
         canvas.drawLine(
             cx,
@@ -232,8 +240,8 @@ class CompositionGuideView(context: Context) : View(context) {
             guidePaint
         )
 
-        val leftShoulder = cx - width * 0.18f
-        val rightShoulder = cx + width * 0.18f
+        val leftShoulder = cx - width * 0.16f
+        val rightShoulder = cx + width * 0.16f
 
         canvas.drawLine(
             leftShoulder,
@@ -243,73 +251,84 @@ class CompositionGuideView(context: Context) : View(context) {
             framePaint
         )
 
+        // Tay trái.
         canvas.drawLine(
             leftShoulder,
             shoulderY,
-            area.left + width * 0.12f,
-            shoulderY + height * 0.12f,
+            area.left + width * 0.17f,
+            shoulderY + height * 0.13f,
             guidePaint
         )
 
+        // Tay phải.
         canvas.drawLine(
             rightShoulder,
             shoulderY,
-            area.right - width * 0.12f,
-            shoulderY + height * 0.12f,
+            area.right - width * 0.17f,
+            shoulderY + height * 0.13f,
             guidePaint
         )
 
+        // Hông.
         canvas.drawLine(
-            cx - width * 0.13f,
+            cx - width * 0.12f,
             hipY,
-            cx + width * 0.13f,
+            cx + width * 0.12f,
             hipY,
             framePaint
         )
 
+        // Chân trái.
         canvas.drawLine(
-            cx - width * 0.10f,
+            cx - width * 0.09f,
             hipY,
-            cx - width * 0.15f,
+            cx - width * 0.14f,
             kneeY,
             guidePaint
         )
 
         canvas.drawLine(
-            cx + width * 0.10f,
-            hipY,
-            cx + width * 0.15f,
+            cx - width * 0.14f,
             kneeY,
-            guidePaint
-        )
-
-        canvas.drawLine(
-            cx - width * 0.15f,
-            kneeY,
-            cx - width * 0.20f,
+            cx - width * 0.18f,
             footY,
             guidePaint
         )
 
+        // Chân phải.
         canvas.drawLine(
-            cx + width * 0.15f,
+            cx + width * 0.09f,
+            hipY,
+            cx + width * 0.14f,
             kneeY,
-            cx + width * 0.20f,
+            guidePaint
+        )
+
+        canvas.drawLine(
+            cx + width * 0.14f,
+            kneeY,
+            cx + width * 0.18f,
             footY,
             guidePaint
         )
 
+        // Các điểm khớp.
         val joints = listOf(
             cx to neckY,
             leftShoulder to shoulderY,
             rightShoulder to shoulderY,
             cx to hipY,
-            cx - width * 0.15f to kneeY,
-            cx + width * 0.15f to kneeY
+            cx - width * 0.14f to kneeY,
+            cx + width * 0.14f to kneeY
         )
 
         joints.forEach { (x, y) ->
-            canvas.drawCircle(x, y, dp(4f), pointPaint)
+            canvas.drawCircle(
+                x,
+                y,
+                dp(3.5f),
+                pointPaint
+            )
         }
     }
 }
