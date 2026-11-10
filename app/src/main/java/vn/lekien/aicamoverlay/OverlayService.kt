@@ -129,7 +129,14 @@ class OverlayService : Service() {
             ).orEmpty()
 
             if (error.isNotEmpty()) {
-                aiStatus = "AI LỖI: $error"
+                aiStatus = if (
+                    error == "Đang chờ khung hình đầu tiên"
+                ) {
+                    "AI: Đang chờ hình ảnh..."
+                } else {
+                    "AI LỖI: $error"
+                }
+
                 updateAiStatus()
                 return
             }
@@ -158,7 +165,9 @@ class OverlayService : Service() {
                 )
             }
 
-            guideView.detections = results
+            if (::guideView.isInitialized) {
+                guideView.detections = results
+            }
 
             aiStatus = if (results.isEmpty()) {
                 "AI: Ảnh ${width}x${height} • Khung #$frame • 0 đối tượng • ${analysisTime}ms"
@@ -195,6 +204,7 @@ class OverlayService : Service() {
                     landscape = newLandscape
 
                     if (::panel.isInitialized &&
+                        ::container.isInitialized &&
                         container.parent != null
                     ) {
                         renderPanel()
@@ -564,9 +574,13 @@ class OverlayService : Service() {
     }
 
     private fun createAiStatusView(): TextView {
-        aiStatusText = text(aiStatus, 10f, Color.rgb(174, 235, 185)).apply {
+        aiStatusText = text(
+            aiStatus,
+            10f,
+            Color.rgb(174, 235, 185)
+        ).apply {
             gravity = Gravity.CENTER
-            maxLines = 3
+            maxLines = 5
             setPadding(dp(4), dp(5), dp(4), dp(5))
         }
 
