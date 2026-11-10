@@ -143,9 +143,11 @@ class ScreenCaptureService : Service() {
         val manager =
             getSystemService(MEDIA_PROJECTION_SERVICE)
                 as MediaProjectionManager
+val projection =
+    manager.getMediaProjection(resultCode, data)
+        ?: throw SecurityException("Không thể khởi tạo MediaProjection")
 
-        val projection =
-            manager.getMediaProjection(resultCode, data)
+mediaProjection = projection
 
         mediaProjection = projection
 
