@@ -150,7 +150,7 @@ class OverlayService : Service() {
 
     private val cameraMonitor = object : Runnable {
         override fun run() {
-            if (!::guideView.isInitialized || isDestroyed) return
+            if (!::guideView.isInitialized) return
 
             val cameraOpen = isCameraForeground()
 
