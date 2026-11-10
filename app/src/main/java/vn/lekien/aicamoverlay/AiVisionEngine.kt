@@ -42,7 +42,7 @@ class AiVisionEngine {
     companion object {
         private const val TAG = "AICAM_VISION"
         private const val MIN_FRAME_INTERVAL_MS = 900L
-        private const val MAX_DETECTIONS = 10
+        private const val MAX_DETECTIONS = 20
 
         const val CATEGORY_FOOD = "Food"
         const val CATEGORY_PLANT = "Plant"
@@ -64,14 +64,19 @@ class AiVisionEngine {
 
     init {
         val options = ObjectDetectorOptions.Builder()
-            .setDetectorMode(ObjectDetectorOptions.STREAM_MODE)
+            .setDetectorMode(
+                ObjectDetectorOptions.SINGLE_IMAGE_MODE
+            )
             .enableClassification()
             .enableMultipleObjects()
             .build()
 
         detector = ObjectDetection.getClient(options)
 
-        Log.d(TAG, "Object Detector đã khởi tạo")
+        Log.d(
+            TAG,
+            "Object Detector đã khởi tạo | SINGLE_IMAGE_MODE"
+        )
     }
 
     fun analyze(
@@ -84,11 +89,13 @@ class AiVisionEngine {
             return
         }
 
-        if (bitmap.isRecycled ||
+        if (
+            bitmap.isRecycled ||
             bitmap.width <= 0 ||
             bitmap.height <= 0
         ) {
             recycleSafely(bitmap)
+
             listener.onError(
                 IllegalArgumentException("Bitmap không hợp lệ")
             )
@@ -117,7 +124,9 @@ class AiVisionEngine {
 
         Log.d(
             TAG,
-            "FRAME #$currentFrame | ${imageWidth}x${imageHeight}"
+            "FRAME #$currentFrame | " +
+                "${imageWidth}x$imageHeight | " +
+                "rotation=$rotationDegrees"
         )
 
         try {
@@ -131,23 +140,46 @@ class AiVisionEngine {
 
                     if (closed) return@addOnSuccessListener
 
+                    Log.d(
+                        TAG,
+                        "RAW RESULT #$currentFrame | " +
+                            "objectCount=${objects.size}"
+                    )
+
                     val detections = objects
                         .take(MAX_DETECTIONS)
                         .mapNotNull { detected ->
 
                             val bounds = detected.boundingBox
 
-                            if (bounds.width() <= 0 ||
+                            Log.d(
+                                TAG,
+                                "RAW OBJECT | " +
+                                    "box=$bounds | " +
+                                    "trackingId=${detected.trackingId} | " +
+                                    "labels=${
+                                        detected.labels.joinToString {
+                                            "${it.text}:${it.confidence}"
+                                        }
+                                    }"
+                            )
+
+                            if (
+                                bounds.width() <= 0 ||
                                 bounds.height() <= 0
                             ) {
+                                Log.w(
+                                    TAG,
+                                    "Bỏ qua đối tượng có bounding box không hợp lệ"
+                                )
                                 return@mapNotNull null
                             }
 
                             val labelInfo = detected.labels
                                 .maxByOrNull { it.confidence }
 
-                            val label = labelInfo?.text
-                                ?: CATEGORY_UNKNOWN
+                            val label =
+                                labelInfo?.text ?: CATEGORY_UNKNOWN
 
                             val confidence =
                                 labelInfo?.confidence ?: 0f
@@ -177,10 +209,26 @@ class AiVisionEngine {
 
                     Log.d(
                         TAG,
-                        "RESULT #$currentFrame | " +
-                            "objects=${detections.size} | " +
+                        "FINAL RESULT #$currentFrame | " +
+                            "raw=${objects.size} | " +
+                            "valid=${detections.size} | " +
                             "time=${elapsed}ms"
                     )
+
+                    detections.forEachIndexed { index, item ->
+                        Log.d(
+                            TAG,
+                            "DETECTION ${index + 1} | " +
+                                "label=${item.label} | " +
+                                "confidence=${item.confidence} | " +
+                                "box=${item.bounds} | " +
+                                "normalized=(" +
+                                "${item.normalizedLeft}," +
+                                "${item.normalizedTop}," +
+                                "${item.normalizedRight}," +
+                                "${item.normalizedBottom})"
+                        )
+                    }
 
                     listener.onResult(
                         AnalysisResult(
@@ -193,6 +241,7 @@ class AiVisionEngine {
                     )
                 }
                 .addOnFailureListener { error ->
+
                     Log.e(
                         TAG,
                         "ML KIT ERROR | FRAME #$currentFrame",
@@ -212,7 +261,11 @@ class AiVisionEngine {
             recycleSafely(bitmap)
             busy.set(false)
 
-            Log.e(TAG, "Không thể phân tích Bitmap", error)
+            Log.e(
+                TAG,
+                "Không thể phân tích Bitmap",
+                error
+            )
 
             if (!closed) {
                 listener.onError(error)
