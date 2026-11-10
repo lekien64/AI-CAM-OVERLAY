@@ -32,12 +32,10 @@ class OverlayService : Service() {
     private var orientationListener: OrientationEventListener? = null
     private var expanded = true
     private var mode = "AUTO"
+    private var selectedScene = "PHONG CẢNH"
     private var glassAlpha = 205
     private var rotationAngle = 0f
     private var isLandscape = false
-
-    private var lastWidth = 0
-    private var lastHeight = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -209,12 +207,12 @@ class OverlayService : Service() {
 
         val auto = button("AUTO", mode == "AUTO") {
             mode = "AUTO"
-            updateMode(row)
+            renderPanel()
         }
 
         val manual = button("MANUAL", mode == "MANUAL") {
             mode = "MANUAL"
-            updateMode(row)
+            renderPanel()
         }
 
         row.addView(
@@ -232,6 +230,45 @@ class OverlayService : Service() {
         )
 
         return row
+    }
+
+    private fun createSceneChoices(): LinearLayout {
+        val choices = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+        }
+
+        val scenes = listOf(
+            "PHONG CẢNH",
+            "CHÂN DUNG",
+            "TẠO DÁNG"
+        )
+
+        choices.addView(
+            text("CHỌN KIỂU CHỤP", 10f, Color.LTGRAY)
+        )
+
+        scenes.forEach { scene ->
+            val choice = button(
+                scene,
+                selectedScene == scene
+            ) {
+                selectedScene = scene
+                renderPanel()
+            }
+
+            choices.addView(
+                choice,
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    dp(40)
+                ).apply {
+                    bottomMargin = dp(6)
+                }
+            )
+        }
+
+        return choices
     }
 
     private fun createOpacityControls(): LinearLayout {
@@ -331,21 +368,36 @@ class OverlayService : Service() {
             left.addView(text("AI CAMERA • FLOW GLASS", 9f))
             left.addView(createModeRow())
 
+            if (mode == "MANUAL") {
+                left.addView(createSceneChoices())
+            }
+
             right.addView(
-                text("Khung hướng dẫn chụp ảnh sẽ hiển thị tại đây", 11f)
+                text(
+                    if (mode == "MANUAL")
+                        "ĐANG CHỌN: $selectedScene"
+                    else
+                        "Chế độ tự động sẽ được phát triển ở bước AI",
+                    11f
+                )
             )
             right.addView(createOpacityControls())
 
-            // Quan trọng: thêm hai cột vào bảng chính.
             panel.addView(
                 left,
-                LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
             )
             panel.addView(
                 right,
-                LinearLayout.LayoutParams(0,
-                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                LinearLayout.LayoutParams(
+                    0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
             )
 
             panel.measure(
@@ -359,12 +411,9 @@ class OverlayService : Service() {
                 )
             )
 
-            val measuredWidth = panel.measuredWidth
-            val measuredHeight = panel.measuredHeight
-
             applyRotatedLayout(
-                measuredWidth,
-                measuredHeight,
+                panel.measuredWidth,
+                panel.measuredHeight,
                 rotationAngle
             )
 
@@ -375,9 +424,16 @@ class OverlayService : Service() {
             panel.addView(text("AI CAMERA • FLOW GLASS", 9f))
             panel.addView(createModeRow())
 
-            panel.addView(
-                text("Khung hướng dẫn chụp ảnh sẽ hiển thị tại đây", 11f)
-            )
+            if (mode == "MANUAL") {
+                panel.addView(createSceneChoices())
+                panel.addView(
+                    text("ĐANG CHỌN: $selectedScene", 11f)
+                )
+            } else {
+                panel.addView(
+                    text("Khung hướng dẫn chụp ảnh sẽ hiển thị tại đây", 11f)
+                )
+            }
 
             panel.addView(createOpacityControls())
 
@@ -418,7 +474,6 @@ class OverlayService : Service() {
         childParams.width = measuredWidth
         childParams.height = measuredHeight
         childParams.gravity = Gravity.CENTER
-
         panel.layoutParams = childParams
 
         container.layoutParams = FrameLayout.LayoutParams(
@@ -475,7 +530,6 @@ class OverlayService : Service() {
 
         params.width = dp(48)
         params.height = dp(48)
-
         keepWindowOnScreen()
 
         attachDrag(bubble) {
@@ -533,15 +587,6 @@ class OverlayService : Service() {
                 return true
             }
         })
-    }
-
-    private fun updateMode(row: LinearLayout) {
-        for (i in 0 until row.childCount) {
-            val item = row.getChildAt(i) as TextView
-            item.background = pillBackground(
-                item.text.toString() == mode
-            )
-        }
     }
 
     private fun updateOpacityText() {
