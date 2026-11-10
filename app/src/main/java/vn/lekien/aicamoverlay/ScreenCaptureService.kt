@@ -9,9 +9,11 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -36,7 +38,10 @@ class ScreenCaptureService : Service() {
     private var captureThread: HandlerThread? = null
     private var captureHandler: Handler? = null
 
+    private var aiVisionEngine: AiVisionEngine? = null
+
     private var firstFrameLogged = false
+    private var analyzedFrameCount = 0L
 
     private val projectionCallback =
         object : MediaProjection.Callback() {
@@ -46,9 +51,42 @@ class ScreenCaptureService : Service() {
             }
         }
 
-    override fun onBind(intent: Intent?): IBinder? {
-        return null
-    }
+    private val visionListener =
+        object : AiVisionEngine.Listener {
+
+            override fun onResult(
+                result: AiVisionEngine.AnalysisResult
+            ) {
+                analyzedFrameCount++
+
+                Log.d(
+                    TAG,
+                    "AI FRAME #$analyzedFrameCount | " +
+                        "${result.imageWidth}x${result.imageHeight} | " +
+                        "Thời gian: ${result.analysisTimeMs}ms | " +
+                        "Số đối tượng: ${result.detections.size}"
+                )
+
+                result.detections.forEach { item ->
+                    Log.d(
+                        TAG,
+                        "AI OBJECT: ${item.label} | " +
+                            "confidence=${item.confidence} | " +
+                            "box=(" +
+                            "${item.normalizedLeft}, " +
+                            "${item.normalizedTop}, " +
+                            "${item.normalizedRight}, " +
+                            "${item.normalizedBottom})"
+                    )
+                }
+            }
+
+            override fun onError(error: Exception) {
+                Log.e(TAG, "AI Vision phân tích thất bại", error)
+            }
+        }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(
         intent: Intent?,
@@ -131,7 +169,7 @@ class ScreenCaptureService : Service() {
             Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .setContentTitle("AI CAM OVERLAY")
-                .setContentText("Smart Frame đang hoạt động")
+                .setContentText("AI Vision đang phân tích hình ảnh")
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
                 .setCategory(Notification.CATEGORY_SERVICE)
@@ -167,8 +205,9 @@ class ScreenCaptureService : Service() {
             start()
         }
 
-        captureHandler =
-            Handler(captureThread!!.looper)
+        captureHandler = Handler(captureThread!!.looper)
+
+        aiVisionEngine = AiVisionEngine()
 
         projection.registerCallback(
             projectionCallback,
@@ -190,25 +229,7 @@ class ScreenCaptureService : Service() {
 
         imageReader?.setOnImageAvailableListener(
             { reader ->
-
-                val image = reader.acquireLatestImage()
-
-                if (image != null) {
-                    try {
-                        if (!firstFrameLogged) {
-
-                            Log.d(
-                                TAG,
-                                "Đã nhận khung hình: " +
-                                    "${image.width} x ${image.height}"
-                            )
-
-                            firstFrameLogged = true
-                        }
-                    } finally {
-                        image.close()
-                    }
-                }
+                processLatestFrame(reader)
             },
             captureHandler
         )
@@ -228,6 +249,99 @@ class ScreenCaptureService : Service() {
             TAG,
             "Smart Frame đã khởi chạy: ${width}x${height}"
         )
+
+        Log.d(TAG, "AI Vision Engine đã kết nối")
+    }
+
+    private fun processLatestFrame(reader: ImageReader) {
+
+        val image = try {
+            reader.acquireLatestImage()
+        } catch (error: Exception) {
+            Log.e(TAG, "Không lấy được khung hình", error)
+            null
+        } ?: return
+
+        try {
+            if (!firstFrameLogged) {
+                Log.d(
+                    TAG,
+                    "Đã nhận khung hình: " +
+                        "${image.width} x ${image.height}"
+                )
+                firstFrameLogged = true
+            }
+
+            val bitmap = imageToBitmap(image) ?: return
+
+            aiVisionEngine?.analyze(
+                bitmap = bitmap,
+                rotationDegrees = 0,
+                listener = visionListener
+            ) ?: run {
+                if (!bitmap.isRecycled) {
+                    bitmap.recycle()
+                }
+            }
+
+        } catch (error: Exception) {
+            Log.e(TAG, "Lỗi xử lý khung hình", error)
+        } finally {
+            image.close()
+        }
+    }
+
+    /**
+     * Chuyển Image RGBA_8888 thành Bitmap.
+     * Xử lý cả rowStride và pixelStride để tránh lệch ảnh.
+     */
+    private fun imageToBitmap(image: Image): Bitmap? {
+
+        val plane = image.planes.firstOrNull() ?: return null
+
+        val buffer = plane.buffer
+        val pixelStride = plane.pixelStride
+        val rowStride = plane.rowStride
+
+        if (pixelStride <= 0 || rowStride <= 0) {
+            return null
+        }
+
+        val width = image.width
+        val height = image.height
+
+        val rowPadding =
+            rowStride - pixelStride * width
+
+        val paddedWidth =
+            width + rowPadding / pixelStride
+
+        val paddedBitmap = Bitmap.createBitmap(
+            paddedWidth,
+            height,
+            Bitmap.Config.ARGB_8888
+        )
+
+        buffer.rewind()
+        paddedBitmap.copyPixelsFromBuffer(buffer)
+
+        if (paddedWidth == width) {
+            return paddedBitmap
+        }
+
+        val croppedBitmap = Bitmap.createBitmap(
+            paddedBitmap,
+            0,
+            0,
+            width,
+            height
+        )
+
+        if (croppedBitmap !== paddedBitmap) {
+            paddedBitmap.recycle()
+        }
+
+        return croppedBitmap
     }
 
     override fun onDestroy() {
@@ -240,6 +354,9 @@ class ScreenCaptureService : Service() {
 
             imageReader?.close()
             imageReader = null
+
+            aiVisionEngine?.close()
+            aiVisionEngine = null
 
             mediaProjection?.unregisterCallback(
                 projectionCallback
@@ -256,7 +373,7 @@ class ScreenCaptureService : Service() {
             Log.e(TAG, "Lỗi khi giải phóng tài nguyên", e)
         }
 
-        Log.d(TAG, "Smart Frame đã tắt")
+        Log.d(TAG, "Smart Frame và AI Vision đã tắt")
 
         super.onDestroy()
     }
