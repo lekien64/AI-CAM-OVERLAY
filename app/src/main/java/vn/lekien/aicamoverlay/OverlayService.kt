@@ -1,14 +1,20 @@
 
 package vn.lekien.aicamoverlay
 
+import android.app.AppOpsManager
 import android.app.Service
+import android.app.usage.UsageEvents
+import android.app.usage.UsageStatsManager
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.os.Process
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.OrientationEventListener
@@ -22,21 +28,29 @@ import kotlin.math.abs
 
 class OverlayService : Service() {
 
+    companion object {
+        private val CAMERA_PACKAGES = setOf(
+            "com.android.camera",
+            "com.android.camera2"
+        )
+    }
+
     private lateinit var wm: WindowManager
     private lateinit var params: WindowManager.LayoutParams
     private lateinit var container: FrameLayout
     private lateinit var panel: LinearLayout
     private lateinit var guideView: CompositionGuideView
-
     private lateinit var opacityText: TextView
 
-    private var orientationListener: OrientationEventListener? = null
+    private val handler = Handler(Looper.getMainLooper())
 
+    private var orientationListener: OrientationEventListener? = null
     private var expanded = true
     private var landscape = false
     private var mode = "AUTO"
     private var selectedScene = "PHONG CẢNH"
     private var glassAlpha = 204
+    private var cameraWasOpen = false
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
@@ -57,10 +71,7 @@ class OverlayService : Service() {
 
                 if (newLandscape != landscape) {
                     landscape = newLandscape
-
-                    if (::panel.isInitialized &&
-                        container.parent != null
-                    ) {
+                    if (::panel.isInitialized && container.parent != null) {
                         renderPanel()
                         updateGuide()
                     }
@@ -80,9 +91,7 @@ class OverlayService : Service() {
         flags: Int,
         startId: Int
     ): Int {
-        if (!::container.isInitialized ||
-            container.parent == null
-        ) {
+        if (!::container.isInitialized || container.parent == null) {
             wm = getSystemService(WINDOW_SERVICE) as WindowManager
             createGuide()
             createPanelWindow()
@@ -90,7 +99,81 @@ class OverlayService : Service() {
             updateGuide()
         }
 
+        handler.removeCallbacks(cameraMonitor)
+        handler.post(cameraMonitor)
+
         return START_NOT_STICKY
+    }
+
+    private fun hasUsageAccess(): Boolean {
+        val appOps = getSystemService(APP_OPS_SERVICE) as AppOpsManager
+
+        return appOps.checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            packageName
+        ) == AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun isCameraForeground(): Boolean {
+        if (!hasUsageAccess()) return false
+
+        val usage = getSystemService(USAGE_STATS_SERVICE)
+            as UsageStatsManager
+
+        val end = System.currentTimeMillis()
+        val begin = end - 15000L
+        val events = usage.queryEvents(begin, end)
+        val event = UsageEvents.Event()
+
+        var latestPackage: String? = null
+
+        while (events.hasNextEvent()) {
+            events.getNextEvent(event)
+
+            when (event.eventType) {
+                UsageEvents.Event.ACTIVITY_RESUMED -> {
+                    latestPackage = event.packageName
+                }
+
+                UsageEvents.Event.ACTIVITY_PAUSED -> {
+                    if (latestPackage == event.packageName) {
+                        latestPackage = null
+                    }
+                }
+            }
+        }
+
+        return latestPackage != null &&
+            latestPackage in CAMERA_PACKAGES
+    }
+
+    private val cameraMonitor = object : Runnable {
+        override fun run() {
+            if (!::guideView.isInitialized || isDestroyed) return
+
+            val cameraOpen = isCameraForeground()
+
+            if (cameraOpen && !cameraWasOpen) {
+                cameraWasOpen = true
+                updateGuide()
+            } else if (!cameraOpen && cameraWasOpen) {
+                cameraWasOpen = false
+
+                guideView.visibility = View.GONE
+
+                if (expanded) {
+                    expanded = false
+                    renderPanel()
+                }
+            }
+
+            if (cameraOpen) {
+                updateGuide()
+            }
+
+            handler.postDelayed(this, 1000L)
+        }
     }
 
     private fun glassBackground() =
@@ -206,8 +289,13 @@ class OverlayService : Service() {
 
         guideView.scene = selectedScene
         guideView.isLandscape = landscape
+
         guideView.visibility =
-            if (mode == "MANUAL") View.VISIBLE else View.GONE
+            if (cameraWasOpen && mode == "MANUAL") {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
 
         guideView.invalidate()
     }
@@ -221,11 +309,7 @@ class OverlayService : Service() {
         val title = text("✦  AI CAM", 18f).apply {
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             setTypeface(null, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                dp(38),
-                1f
-            )
+            layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f)
         }
 
         val minimize = actionButton("−") {
@@ -276,9 +360,7 @@ class OverlayService : Service() {
             orientation = LinearLayout.VERTICAL
         }
 
-        choices.addView(
-            text("CHỌN KIỂU CHỤP", 10f, Color.LTGRAY)
-        )
+        choices.addView(text("CHỌN KIỂU CHỤP", 10f, Color.LTGRAY))
 
         listOf(
             "PHONG CẢNH",
@@ -357,13 +439,8 @@ class OverlayService : Service() {
                         updateOpacityText()
                     }
 
-                    override fun onStartTrackingTouch(
-                        seekBar: SeekBar?
-                    ) {}
-
-                    override fun onStopTrackingTouch(
-                        seekBar: SeekBar?
-                    ) {}
+                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
                 }
             )
         }
@@ -383,7 +460,9 @@ class OverlayService : Service() {
                 setStroke(dp(1), Color.argb(180, 220, 230, 245))
             }
 
-            setOnClickListener { stopSelf() }
+            setOnClickListener {
+                stopAllServices()
+            }
 
             layoutParams = LinearLayout.LayoutParams(
                 dp(38),
@@ -413,7 +492,6 @@ class OverlayService : Service() {
         panel.setPadding(dp(8), dp(6), dp(8), dp(7))
 
         if (landscape) {
-            // Bố cục ngang nhỏ gọn, không xoay chữ.
             panel.orientation = LinearLayout.HORIZONTAL
 
             val left = LinearLayout(this).apply {
@@ -439,24 +517,15 @@ class OverlayService : Service() {
 
             panel.addView(
                 left,
-                LinearLayout.LayoutParams(
-                    0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1.35f
-                )
+                LinearLayout.LayoutParams(0, -2, 1.35f)
             )
 
             panel.addView(
                 right,
-                LinearLayout.LayoutParams(
-                    0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    0.85f
-                )
+                LinearLayout.LayoutParams(0, -2, 0.85f)
             )
 
             params.width = dp(320)
-
         } else {
             panel.orientation = LinearLayout.VERTICAL
 
@@ -511,10 +580,7 @@ class OverlayService : Service() {
         params.width = dp(48)
         params.height = dp(48)
 
-        container.layoutParams = FrameLayout.LayoutParams(
-            dp(48),
-            dp(48)
-        )
+        container.layoutParams = FrameLayout.LayoutParams(dp(48), dp(48))
 
         attachDrag(bubble) {
             expanded = true
@@ -592,7 +658,19 @@ class OverlayService : Service() {
         }
     }
 
+    private fun stopAllServices() {
+        handler.removeCallbacks(cameraMonitor)
+
+        stopService(
+            Intent(this, ScreenCaptureService::class.java)
+        )
+
+        stopSelf()
+    }
+
     override fun onDestroy() {
+        handler.removeCallbacks(cameraMonitor)
+
         orientationListener?.disable()
         orientationListener = null
 
