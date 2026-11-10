@@ -37,6 +37,11 @@ class ScreenCaptureService : Service() {
         private const val EXTRA_AI_MESSAGE = "aiMessage"
     }
 
+    private data class BitmapStats(
+        val averageLuma: Int,
+        val visibleRatio: Int
+    )
+
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
@@ -66,13 +71,15 @@ class ScreenCaptureService : Service() {
             ) {
                 analyzedFrameCount++
 
-                val objectCount = result.detections.size
+                val stats = latestBitmapStats
 
                 val message =
                     "Khung #${result.frameNumber} • " +
                     "${result.imageWidth}x${result.imageHeight} • " +
-                    "$objectCount đối tượng • " +
-                    "${result.analysisTimeMs}ms"
+                    "${result.detections.size} đối tượng • " +
+                    "${result.analysisTimeMs}ms • " +
+                    "Độ sáng ${stats.averageLuma}/255 • " +
+                    "Vùng sáng ${stats.visibleRatio}%"
 
                 Log.d(TAG, "AI RESULT: $message")
 
@@ -118,6 +125,9 @@ class ScreenCaptureService : Service() {
                 sendAiError(message)
             }
         }
+
+    @Volatile
+    private var latestBitmapStats = BitmapStats(0, 0)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -353,10 +363,12 @@ class ScreenCaptureService : Service() {
             OverlayService.ACTION_AI_RESULT
         ).apply {
             setPackage(packageName)
+
             putStringArrayListExtra(
                 OverlayService.EXTRA_LABELS,
                 arrayListOf()
             )
+
             putExtra(EXTRA_AI_ERROR, message)
             putExtra(EXTRA_AI_MESSAGE, "Lỗi: $message")
         }
@@ -400,6 +412,15 @@ class ScreenCaptureService : Service() {
                 return
             }
 
+            latestBitmapStats = inspectBitmap(bitmap)
+
+            Log.d(
+                TAG,
+                "BITMAP CHECK | " +
+                    "luma=${latestBitmapStats.averageLuma}/255 | " +
+                    "visible=${latestBitmapStats.visibleRatio}%"
+            )
+
             aiVisionEngine?.analyze(
                 bitmap = bitmap,
                 rotationDegrees = 0,
@@ -417,6 +438,51 @@ class ScreenCaptureService : Service() {
         } finally {
             image.close()
         }
+    }
+
+    private fun inspectBitmap(bitmap: Bitmap): BitmapStats {
+        val sampleSize = 24
+        var totalLuma = 0L
+        var visiblePixels = 0
+        var samples = 0
+
+        for (y in 0 until sampleSize) {
+            val py = ((y + 0.5f) * bitmap.height / sampleSize)
+                .toInt()
+                .coerceIn(0, bitmap.height - 1)
+
+            for (x in 0 until sampleSize) {
+                val px = ((x + 0.5f) * bitmap.width / sampleSize)
+                    .toInt()
+                    .coerceIn(0, bitmap.width - 1)
+
+                val pixel = bitmap.getPixel(px, py)
+
+                val red = (pixel shr 16) and 0xFF
+                val green = (pixel shr 8) and 0xFF
+                val blue = pixel and 0xFF
+
+                val luma =
+                    (red * 299 + green * 587 + blue * 114) / 1000
+
+                totalLuma += luma
+
+                if (luma > 20) {
+                    visiblePixels++
+                }
+
+                samples++
+            }
+        }
+
+        if (samples == 0) {
+            return BitmapStats(0, 0)
+        }
+
+        return BitmapStats(
+            averageLuma = (totalLuma / samples).toInt(),
+            visibleRatio = (visiblePixels * 100 / samples)
+        )
     }
 
     private fun imageToBitmap(image: Image): Bitmap? {
