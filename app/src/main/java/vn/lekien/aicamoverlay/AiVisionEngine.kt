@@ -13,15 +13,14 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * AI Vision Prototype 01
+ * AI Vision Prototype 02
  *
- * - Phân tích hình ảnh ngay trên thiết bị.
- * - Nhận diện vị trí đối tượng.
- * - Phân loại sơ bộ: Food, Plant, Place,
- *   Home goods, Fashion goods.
- * - Trả tọa độ chuẩn hóa để vẽ khung nhận diện.
+ * - Phân tích khung hình ngay trên thiết bị.
+ * - Nhận diện và phân loại đối tượng.
+ * - Trả về tọa độ đối tượng đã chuẩn hóa.
+ * - Tự giải phóng Bitmap sau khi xử lý.
  *
- * Không gửi hình ảnh lên máy chủ.
+ * Hình ảnh không được gửi lên máy chủ.
  */
 class AiVisionEngine {
 
@@ -70,9 +69,7 @@ class AiVisionEngine {
 
     init {
         val options = ObjectDetectorOptions.Builder()
-            .setDetectorMode(
-                ObjectDetectorOptions.STREAM_MODE
-            )
+            .setDetectorMode(ObjectDetectorOptions.STREAM_MODE)
             .enableClassification()
             .build()
 
@@ -80,22 +77,24 @@ class AiVisionEngine {
     }
 
     /**
-     * Gửi một Bitmap vào AI để phân tích.
-     *
-     * rotationDegrees:
-     * 0, 90, 180 hoặc 270.
-     *
-     * Bitmap thuộc quyền quản lý của nơi gọi.
-     * Engine không tự recycle Bitmap.
+     * Engine nhận quyền sở hữu Bitmap.
+     * Bitmap sẽ được recycle khi xử lý xong hoặc bị bỏ qua.
      */
     fun analyze(
         bitmap: Bitmap,
         rotationDegrees: Int = 0,
         listener: Listener
     ) {
-        if (closed) return
+        if (closed) {
+            recycleSafely(bitmap)
+            return
+        }
 
-        if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) {
+        if (bitmap.isRecycled ||
+            bitmap.width <= 0 ||
+            bitmap.height <= 0
+        ) {
+            recycleSafely(bitmap)
             listener.onError(
                 IllegalArgumentException("Bitmap không hợp lệ")
             )
@@ -105,10 +104,12 @@ class AiVisionEngine {
         val now = SystemClock.elapsedRealtime()
 
         if (now - lastFrameTime < MIN_FRAME_INTERVAL_MS) {
+            recycleSafely(bitmap)
             return
         }
 
         if (!busy.compareAndSet(false, true)) {
+            recycleSafely(bitmap)
             return
         }
 
@@ -131,7 +132,9 @@ class AiVisionEngine {
 
                         val bounds = detected.boundingBox
 
-                        if (bounds.width() <= 0 || bounds.height() <= 0) {
+                        if (bounds.width() <= 0 ||
+                            bounds.height() <= 0
+                        ) {
                             return@mapNotNull null
                         }
 
@@ -181,15 +184,23 @@ class AiVisionEngine {
                     }
                 }
                 .addOnCompleteListener {
+                    recycleSafely(bitmap)
                     busy.set(false)
                 }
 
         } catch (error: Exception) {
+            recycleSafely(bitmap)
             busy.set(false)
 
             if (!closed) {
                 listener.onError(error)
             }
+        }
+    }
+
+    private fun recycleSafely(bitmap: Bitmap) {
+        if (!bitmap.isRecycled) {
+            bitmap.recycle()
         }
     }
 
