@@ -12,6 +12,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.OrientationEventListener
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -26,20 +27,17 @@ class OverlayService : Service() {
     private lateinit var params: WindowManager.LayoutParams
     private lateinit var container: FrameLayout
     private lateinit var panel: LinearLayout
-
     private lateinit var opacityText: TextView
 
     private var orientationListener: OrientationEventListener? = null
-
     private var expanded = true
     private var mode = "AUTO"
     private var glassAlpha = 205
-
     private var rotationAngle = 0f
     private var isLandscape = false
 
-    private var contentWidth = 280
-    private var contentHeight = 300
+    private var lastWidth = 0
+    private var lastHeight = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -48,16 +46,16 @@ class OverlayService : Service() {
             override fun onOrientationChanged(degrees: Int) {
                 if (degrees == ORIENTATION_UNKNOWN) return
 
-                val newAngle = when (degrees) {
+                val angle = when (degrees) {
                     in 45..134 -> 90f
                     in 135..224 -> 180f
                     in 225..314 -> 270f
                     else -> 0f
                 }
 
-                if (newAngle != rotationAngle) {
-                    rotationAngle = newAngle
-                    isLandscape = newAngle == 90f || newAngle == 270f
+                if (angle != rotationAngle) {
+                    rotationAngle = angle
+                    isLandscape = angle == 90f || angle == 270f
 
                     if (::container.isInitialized &&
                         container.parent != null
@@ -80,16 +78,13 @@ class OverlayService : Service() {
         flags: Int,
         startId: Int
     ): Int {
-
         if (!this::container.isInitialized ||
             container.parent == null
         ) {
             wm = getSystemService(WINDOW_SERVICE) as WindowManager
-
             createWindow()
             renderPanel()
         }
-
         return START_NOT_STICKY
     }
 
@@ -201,7 +196,6 @@ class OverlayService : Service() {
 
         header.addView(title)
         header.addView(minimize)
-
         attachDrag(title)
 
         return header
@@ -253,13 +247,11 @@ class OverlayService : Service() {
 
             progressTintList =
                 android.content.res.ColorStateList.valueOf(Color.WHITE)
-
             thumbTintList =
                 android.content.res.ColorStateList.valueOf(Color.WHITE)
 
             setOnSeekBarChangeListener(
                 object : SeekBar.OnSeekBarChangeListener {
-
                     override fun onProgressChanged(
                         seekBar: SeekBar?,
                         progress: Int,
@@ -291,30 +283,28 @@ class OverlayService : Service() {
         )
 
         updateOpacityText()
-
         return column
     }
 
     private fun renderPanel() {
         panel.removeAllViews()
+        panel.rotation = 0f
 
         if (!expanded) {
             renderBubble()
             return
         }
 
-        panel.rotation = 0f
         panel.background = glassBackground()
         panel.setPadding(dp(10), dp(8), dp(10), dp(10))
 
         if (isLandscape) {
-            contentWidth = min(
-                resources.displayMetrics.widthPixels /
-                    resources.displayMetrics.density.toInt().coerceAtLeast(1) - 32,
-                560
-            )
-            contentWidth = contentWidth.coerceAtLeast(300)
-            contentHeight = 220
+            val density = resources.displayMetrics.density
+            val availableLongSide =
+                (resources.displayMetrics.heightPixels / density).toInt()
+
+            val contentWidth = min(availableLongSide - 48, 560)
+                .coerceAtLeast(300)
 
             panel.orientation = LinearLayout.HORIZONTAL
 
@@ -322,7 +312,7 @@ class OverlayService : Service() {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(
                     0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
                     1f
                 )
             }
@@ -331,7 +321,7 @@ class OverlayService : Service() {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(
                     0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
                     1f
                 )
                 setPadding(dp(8), 0, 0, 0)
@@ -346,10 +336,39 @@ class OverlayService : Service() {
             )
             right.addView(createOpacityControls())
 
-        } else {
-            contentWidth = 280
-            contentHeight = 300
+            // Quan trọng: thêm hai cột vào bảng chính.
+            panel.addView(
+                left,
+                LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            )
+            panel.addView(
+                right,
+                LinearLayout.LayoutParams(0,
+                    ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            )
 
+            panel.measure(
+                View.MeasureSpec.makeMeasureSpec(
+                    dp(contentWidth),
+                    View.MeasureSpec.EXACTLY
+                ),
+                View.MeasureSpec.makeMeasureSpec(
+                    resources.displayMetrics.heightPixels,
+                    View.MeasureSpec.AT_MOST
+                )
+            )
+
+            val measuredWidth = panel.measuredWidth
+            val measuredHeight = panel.measuredHeight
+
+            applyRotatedLayout(
+                measuredWidth,
+                measuredHeight,
+                rotationAngle
+            )
+
+        } else {
             panel.orientation = LinearLayout.VERTICAL
 
             panel.addView(createHeader())
@@ -361,53 +380,78 @@ class OverlayService : Service() {
             )
 
             panel.addView(createOpacityControls())
-        }
 
-        applyRotation()
+            panel.measure(
+                View.MeasureSpec.makeMeasureSpec(
+                    dp(280),
+                    View.MeasureSpec.EXACTLY
+                ),
+                View.MeasureSpec.makeMeasureSpec(
+                    resources.displayMetrics.heightPixels,
+                    View.MeasureSpec.AT_MOST
+                )
+            )
+
+            applyRotatedLayout(
+                panel.measuredWidth,
+                panel.measuredHeight,
+                rotationAngle
+            )
+        }
     }
 
-    private fun applyRotation() {
-        val rotated = rotationAngle == 90f ||
-            rotationAngle == 270f
+    private fun applyRotatedLayout(
+        measuredWidth: Int,
+        measuredHeight: Int,
+        angle: Float
+    ) {
+        val rotated = angle == 90f || angle == 270f
 
-        val viewWidth = dp(contentWidth)
-        val viewHeight = dp(contentHeight)
+        panel.rotation = angle
 
-        val windowWidth = if (rotated) viewHeight else viewWidth
-        val windowHeight = if (rotated) viewWidth else viewHeight
-
-        panel.rotation = rotationAngle
+        val windowWidth = if (rotated) measuredHeight else measuredWidth
+        val windowHeight = if (rotated) measuredWidth else measuredHeight
 
         val childParams = container.getChildAt(0).layoutParams
             as FrameLayout.LayoutParams
 
-        childParams.width = viewWidth
-        childParams.height = viewHeight
+        childParams.width = measuredWidth
+        childParams.height = measuredHeight
         childParams.gravity = Gravity.CENTER
 
         panel.layoutParams = childParams
 
+        container.layoutParams = FrameLayout.LayoutParams(
+            windowWidth,
+            windowHeight,
+            Gravity.CENTER
+        )
+
         params.width = windowWidth
         params.height = windowHeight
 
-        container.layoutParams = FrameLayout.LayoutParams(
-            windowWidth,
-            windowHeight
-        )
+        keepWindowOnScreen()
 
         if (container.parent != null) {
             wm.updateViewLayout(container, params)
         }
     }
 
+    private fun keepWindowOnScreen() {
+        val metrics = resources.displayMetrics
+        val maxX = (metrics.widthPixels - params.width).coerceAtLeast(0)
+        val maxY = (metrics.heightPixels - params.height).coerceAtLeast(0)
+
+        params.x = params.x.coerceIn(0, maxX)
+        params.y = params.y.coerceIn(0, maxY)
+    }
+
     private fun renderBubble() {
         panel.rotation = 0f
-        contentWidth = 48
-        contentHeight = 48
-
         panel.orientation = LinearLayout.VERTICAL
-        panel.setPadding(0, 0, 0, 0)
         panel.background = null
+        panel.setPadding(0, 0, 0, 0)
+        panel.removeAllViews()
 
         val bubble = text("✦", 21f).apply {
             background = GradientDrawable(
@@ -420,14 +464,19 @@ class OverlayService : Service() {
                 cornerRadius = dp(30).toFloat()
                 setStroke(dp(1), Color.argb(190, 220, 230, 245))
             }
-
             layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
         }
 
         panel.addView(bubble)
 
+        container.layoutParams = FrameLayout.LayoutParams(
+            dp(48), dp(48), Gravity.CENTER
+        )
+
         params.width = dp(48)
         params.height = dp(48)
+
+        keepWindowOnScreen()
 
         attachDrag(bubble) {
             expanded = true
@@ -442,18 +491,13 @@ class OverlayService : Service() {
         onTap: (() -> Unit)? = null
     ) {
         view.setOnTouchListener(object : View.OnTouchListener {
-
             var startX = 0
             var startY = 0
             var touchX = 0f
             var touchY = 0f
             var moved = false
 
-            override fun onTouch(
-                v: View,
-                event: MotionEvent
-            ): Boolean {
-
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         startX = params.x
@@ -475,9 +519,9 @@ class OverlayService : Service() {
                         if (moved) {
                             params.x = startX + dx.toInt()
                             params.y = startY + dy.toInt()
+                            keepWindowOnScreen()
                             wm.updateViewLayout(container, params)
                         }
-
                         return true
                     }
 
@@ -486,7 +530,6 @@ class OverlayService : Service() {
                         return true
                     }
                 }
-
                 return true
             }
         })
@@ -495,7 +538,6 @@ class OverlayService : Service() {
     private fun updateMode(row: LinearLayout) {
         for (i in 0 until row.childCount) {
             val item = row.getChildAt(i) as TextView
-
             item.background = pillBackground(
                 item.text.toString() == mode
             )
