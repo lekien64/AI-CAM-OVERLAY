@@ -1,6 +1,7 @@
 
 package vn.lekien.aicamoverlay
 
+import android.app.Activity
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -19,7 +20,6 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.util.Log
-import android.view.WindowManager
 
 class ScreenCaptureService : Service() {
 
@@ -36,7 +36,6 @@ class ScreenCaptureService : Service() {
     private var captureThread: HandlerThread? = null
     private var captureHandler: Handler? = null
 
-    private var stopping = false
     private var firstFrameLogged = false
 
     private val projectionCallback =
@@ -47,7 +46,9 @@ class ScreenCaptureService : Service() {
             }
         }
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onBind(intent: Intent?): IBinder? {
+        return null
+    }
 
     override fun onStartCommand(
         intent: Intent?,
@@ -73,7 +74,10 @@ class ScreenCaptureService : Service() {
                 intent?.getParcelableExtra("projectionData")
             }
 
-        if (resultCode != android.app.Activity.RESULT_OK || projectionData == null) {
+        if (
+            resultCode != Activity.RESULT_OK ||
+            projectionData == null
+        ) {
             Log.e(TAG, "Thiếu dữ liệu cấp quyền MediaProjection")
             stopSelf()
             return START_NOT_STICKY
@@ -94,6 +98,7 @@ class ScreenCaptureService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "AI CAM Smart Frame",
@@ -110,24 +115,27 @@ class ScreenCaptureService : Service() {
     }
 
     private fun startCaptureForeground() {
-        val openAppIntent = Intent(this, MainActivity::class.java)
+
+        val openAppIntent =
+            Intent(this, MainActivity::class.java)
 
         val pendingIntent = PendingIntent.getActivity(
             this,
-            4102,
+            NOTIFICATION_ID,
             openAppIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or
                 PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setContentTitle("AI CAM OVERLAY")
-            .setContentText("Smart Frame đang hoạt động")
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setCategory(Notification.CATEGORY_SERVICE)
-            .build()
+        val notification =
+            Notification.Builder(this, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_menu_camera)
+                .setContentTitle("AI CAM OVERLAY")
+                .setContentText("Smart Frame đang hoạt động")
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .build()
 
         startForeground(
             NOTIFICATION_ID,
@@ -140,14 +148,16 @@ class ScreenCaptureService : Service() {
         resultCode: Int,
         data: Intent
     ) {
+
         val manager =
             getSystemService(MEDIA_PROJECTION_SERVICE)
                 as MediaProjectionManager
-val projection =
-    manager.getMediaProjection(resultCode, data)
-        ?: throw SecurityException("Không thể khởi tạo MediaProjection")
 
-mediaProjection = projection
+        val projection =
+            manager.getMediaProjection(resultCode, data)
+                ?: throw SecurityException(
+                    "Không thể khởi tạo MediaProjection"
+                )
 
         mediaProjection = projection
 
@@ -157,15 +167,13 @@ mediaProjection = projection
             start()
         }
 
-        captureHandler = Handler(captureThread!!.looper)
+        captureHandler =
+            Handler(captureThread!!.looper)
 
         projection.registerCallback(
             projectionCallback,
             captureHandler
         )
-
-        val windowManager =
-            getSystemService(WINDOW_SERVICE) as WindowManager
 
         val metrics = resources.displayMetrics
 
@@ -182,16 +190,19 @@ mediaProjection = projection
 
         imageReader?.setOnImageAvailableListener(
             { reader ->
+
                 val image = reader.acquireLatestImage()
 
                 if (image != null) {
                     try {
                         if (!firstFrameLogged) {
+
                             Log.d(
                                 TAG,
                                 "Đã nhận khung hình: " +
                                     "${image.width} x ${image.height}"
                             )
+
                             firstFrameLogged = true
                         }
                     } finally {
@@ -220,17 +231,20 @@ mediaProjection = projection
     }
 
     override fun onDestroy() {
-        stopping = true
 
         try {
             imageReader?.setOnImageAvailableListener(null, null)
+
             virtualDisplay?.release()
             virtualDisplay = null
 
             imageReader?.close()
             imageReader = null
 
-            mediaProjection?.unregisterCallback(projectionCallback)
+            mediaProjection?.unregisterCallback(
+                projectionCallback
+            )
+
             mediaProjection?.stop()
             mediaProjection = null
 
@@ -243,6 +257,7 @@ mediaProjection = projection
         }
 
         Log.d(TAG, "Smart Frame đã tắt")
+
         super.onDestroy()
     }
 }
