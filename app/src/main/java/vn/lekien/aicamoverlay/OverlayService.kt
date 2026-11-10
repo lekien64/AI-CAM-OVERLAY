@@ -3,6 +3,7 @@ package vn.lekien.aicamoverlay
 
 import android.app.Service
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
@@ -18,7 +19,6 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import kotlin.math.abs
-import kotlin.math.min
 
 class OverlayService : Service() {
 
@@ -26,40 +26,39 @@ class OverlayService : Service() {
     private lateinit var params: WindowManager.LayoutParams
     private lateinit var container: FrameLayout
     private lateinit var panel: LinearLayout
-
     private lateinit var guideView: CompositionGuideView
-    private lateinit var guideParams: WindowManager.LayoutParams
+
     private lateinit var opacityText: TextView
 
     private var orientationListener: OrientationEventListener? = null
 
     private var expanded = true
+    private var landscape = false
     private var mode = "AUTO"
     private var selectedScene = "PHONG CẢNH"
-
     private var glassAlpha = 204
-    private var rotationAngle = 0f
-    private var isLandscape = false
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
 
     override fun onCreate() {
         super.onCreate()
+
+        landscape =
+            resources.configuration.orientation ==
+                Configuration.ORIENTATION_LANDSCAPE
 
         orientationListener = object : OrientationEventListener(this) {
             override fun onOrientationChanged(degrees: Int) {
                 if (degrees == ORIENTATION_UNKNOWN) return
 
-                val angle = when (degrees) {
-                    in 45..134 -> 270f
-                    in 135..224 -> 180f
-                    in 225..314 -> 90f
-                    else -> 0f
-                }
+                val newLandscape =
+                    degrees in 60..120 || degrees in 240..300
 
-                if (angle != rotationAngle) {
-                    rotationAngle = angle
-                    isLandscape = angle == 90f || angle == 270f
+                if (newLandscape != landscape) {
+                    landscape = newLandscape
 
-                    if (::container.isInitialized &&
+                    if (::panel.isInitialized &&
                         container.parent != null
                     ) {
                         renderPanel()
@@ -81,11 +80,11 @@ class OverlayService : Service() {
         flags: Int,
         startId: Int
     ): Int {
-        if (!this::container.isInitialized ||
+        if (!::container.isInitialized ||
             container.parent == null
         ) {
             wm = getSystemService(WINDOW_SERVICE) as WindowManager
-            createGuideWindow()
+            createGuide()
             createPanelWindow()
             renderPanel()
             updateGuide()
@@ -94,23 +93,17 @@ class OverlayService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun dp(value: Int): Int =
-        (value * resources.displayMetrics.density).toInt()
-
-    private fun glassBackground(radius: Int = 26) =
+    private fun glassBackground() =
         GradientDrawable(
             GradientDrawable.Orientation.TL_BR,
             intArrayOf(
-                Color.argb(glassAlpha, 8, 10, 14),
-                Color.argb(glassAlpha, 22, 25, 32),
-                Color.argb(glassAlpha, 9, 11, 16)
+                Color.argb(glassAlpha, 8, 10, 16),
+                Color.argb(glassAlpha, 26, 30, 40),
+                Color.argb(glassAlpha, 9, 12, 18)
             )
         ).apply {
-            cornerRadius = dp(radius).toFloat()
-            setStroke(
-                dp(1),
-                Color.argb(150, 220, 230, 245)
-            )
+            cornerRadius = dp(25).toFloat()
+            setStroke(dp(1), Color.argb(165, 220, 230, 245))
         }
 
     private fun pillBackground(selected: Boolean = false) =
@@ -118,31 +111,18 @@ class OverlayService : Service() {
             GradientDrawable.Orientation.LEFT_RIGHT,
             if (selected) {
                 intArrayOf(
-                    Color.rgb(75, 82, 96),
-                    Color.rgb(48, 54, 66)
+                    Color.rgb(76, 84, 100),
+                    Color.rgb(48, 55, 68)
                 )
             } else {
                 intArrayOf(
-                    Color.argb(210, 48, 53, 64),
-                    Color.argb(210, 29, 33, 42)
+                    Color.argb(215, 48, 53, 65),
+                    Color.argb(215, 28, 32, 42)
                 )
             }
         ).apply {
-            cornerRadius = dp(40).toFloat()
-            setStroke(
-                dp(1),
-                Color.argb(150, 210, 220, 235)
-            )
-        }
-
-    private fun closeBackground() =
-        GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(Color.rgb(43, 48, 59))
-            setStroke(
-                dp(1),
-                Color.argb(180, 220, 230, 245)
-            )
+            cornerRadius = dp(35).toFloat()
+            setStroke(dp(1), Color.argb(150, 210, 220, 235))
         }
 
     private fun text(
@@ -154,10 +134,10 @@ class OverlayService : Service() {
         textSize = size
         setTextColor(color)
         gravity = Gravity.CENTER
-        setPadding(dp(12), dp(9), dp(12), dp(9))
+        setPadding(dp(7), dp(5), dp(7), dp(5))
     }
 
-    private fun button(
+    private fun actionButton(
         value: String,
         selected: Boolean = false,
         action: () -> Unit
@@ -167,14 +147,14 @@ class OverlayService : Service() {
         setOnClickListener { action() }
     }
 
-    private fun createGuideWindow() {
+    private fun createGuide() {
         guideView = CompositionGuideView(this).apply {
             visibility = View.GONE
             isClickable = false
             isFocusable = false
         }
 
-        guideParams = WindowManager.LayoutParams(
+        val guideParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -200,33 +180,32 @@ class OverlayService : Service() {
         container.addView(
             panel,
             FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT
             )
         )
 
         params = WindowManager.LayoutParams(
             dp(280),
-            dp(300),
+            WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = dp(16)
-            y = dp(40)
+            x = dp(12)
+            y = dp(35)
         }
 
         wm.addView(container, params)
     }
 
     private fun updateGuide() {
-        if (!this::guideView.isInitialized) return
+        if (!::guideView.isInitialized) return
 
         guideView.scene = selectedScene
-        guideView.guideRotation = rotationAngle
-
+        guideView.isLandscape = landscape
         guideView.visibility =
             if (mode == "MANUAL") View.VISIBLE else View.GONE
 
@@ -242,15 +221,14 @@ class OverlayService : Service() {
         val title = text("✦  AI CAM", 18f).apply {
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             setTypeface(null, Typeface.BOLD)
-
             layoutParams = LinearLayout.LayoutParams(
                 0,
-                dp(42),
+                dp(38),
                 1f
             )
         }
 
-        val minimize = button("−") {
+        val minimize = actionButton("−") {
             expanded = false
             renderPanel()
         }
@@ -268,28 +246,24 @@ class OverlayService : Service() {
             gravity = Gravity.CENTER
         }
 
-        val auto = button("AUTO", mode == "AUTO") {
-            mode = "AUTO"
-            renderPanel()
-            updateGuide()
-        }
-
-        val manual = button("MANUAL", mode == "MANUAL") {
-            mode = "MANUAL"
-            renderPanel()
-            updateGuide()
-        }
-
         row.addView(
-            auto,
-            LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+            actionButton("AUTO", mode == "AUTO") {
+                mode = "AUTO"
+                renderPanel()
+                updateGuide()
+            },
+            LinearLayout.LayoutParams(0, dp(38), 1f).apply {
                 marginEnd = dp(4)
             }
         )
 
         row.addView(
-            manual,
-            LinearLayout.LayoutParams(0, dp(40), 1f).apply {
+            actionButton("MANUAL", mode == "MANUAL") {
+                mode = "MANUAL"
+                renderPanel()
+                updateGuide()
+            },
+            LinearLayout.LayoutParams(0, dp(38), 1f).apply {
                 marginStart = dp(4)
             }
         )
@@ -300,26 +274,25 @@ class OverlayService : Service() {
     private fun createSceneChoices(): LinearLayout {
         val choices = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
         }
 
         choices.addView(
             text("CHỌN KIỂU CHỤP", 10f, Color.LTGRAY)
         )
 
-        val scenes = listOf(
+        listOf(
             "PHONG CẢNH",
             "CHÂN DUNG",
             "TẠO DÁNG"
-        )
+        ).forEach { scene ->
 
-        scenes.forEach { scene ->
             val selected = selectedScene == scene
 
             val choice = TextView(this).apply {
                 text = if (selected) "✓  $scene" else scene
                 textSize = 12f
                 gravity = Gravity.CENTER
+                setTypeface(null, Typeface.BOLD)
 
                 setTextColor(
                     if (selected) {
@@ -329,10 +302,8 @@ class OverlayService : Service() {
                     }
                 )
 
-                typeface = Typeface.DEFAULT_BOLD
                 background = pillBackground(selected)
-
-                setPadding(dp(8), dp(6), dp(8), dp(6))
+                setPadding(dp(5), dp(3), dp(5), dp(3))
 
                 setOnClickListener {
                     selectedScene = scene
@@ -345,9 +316,9 @@ class OverlayService : Service() {
                 choice,
                 LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
-                    dp(36)
+                    dp(if (landscape) 32 else 36)
                 ).apply {
-                    bottomMargin = dp(4)
+                    bottomMargin = dp(3)
                 }
             )
         }
@@ -358,16 +329,15 @@ class OverlayService : Service() {
     private fun createOpacityControls(): LinearLayout {
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
         }
 
         opacityText = text("", 10f)
 
         val slider = SeekBar(this).apply {
             max = 90
-
-            progress = (
-                glassAlpha * 100 / 255
-            ).coerceIn(6, 96) - 6
+            progress = (glassAlpha * 100 / 255)
+                .coerceIn(6, 96) - 6
 
             progressTintList =
                 android.content.res.ColorStateList.valueOf(Color.WHITE)
@@ -382,9 +352,7 @@ class OverlayService : Service() {
                         progress: Int,
                         fromUser: Boolean
                     ) {
-                        val percent = progress + 6
-                        glassAlpha = percent * 255 / 100
-
+                        glassAlpha = (progress + 6) * 255 / 100
                         panel.background = glassBackground()
                         updateOpacityText()
                     }
@@ -403,16 +371,19 @@ class OverlayService : Service() {
         column.addView(opacityText)
         column.addView(slider)
 
-        val closeButton = TextView(this).apply {
+        val close = TextView(this).apply {
             text = "×"
             textSize = 22f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            background = closeBackground()
 
-            setOnClickListener {
-                stopSelf()
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.rgb(43, 48, 59))
+                setStroke(dp(1), Color.argb(180, 220, 230, 245))
             }
+
+            setOnClickListener { stopSelf() }
 
             layoutParams = LinearLayout.LayoutParams(
                 dp(38),
@@ -423,7 +394,7 @@ class OverlayService : Service() {
             }
         }
 
-        column.addView(closeButton)
+        column.addView(close)
         updateOpacityText()
 
         return column
@@ -435,35 +406,25 @@ class OverlayService : Service() {
 
         if (!expanded) {
             renderBubble()
-            updateGuide()
             return
         }
 
         panel.background = glassBackground()
-        panel.setPadding(dp(8), dp(6), dp(8), dp(8))
+        panel.setPadding(dp(8), dp(6), dp(8), dp(7))
 
-        if (isLandscape) {
-            // Giới hạn kích thước bảng ngang.
-            // Khi xoay 90 độ, chiều dài này trở thành chiều cao cửa sổ.
-            val density = resources.displayMetrics.density
-
-            val availableLongSide =
-                (resources.displayMetrics.heightPixels / density).toInt()
-
-            val contentWidth = min(
-                availableLongSide - 40,
-                360
-            ).coerceAtLeast(260)
-
+        if (landscape) {
+            // Bố cục ngang nhỏ gọn, không xoay chữ.
             panel.orientation = LinearLayout.HORIZONTAL
 
             val left = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
             }
 
             val right = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(4), 0, 0, 0)
+                gravity = Gravity.CENTER
+                setPadding(dp(5), 0, 0, 0)
             }
 
             left.addView(createHeader())
@@ -481,7 +442,7 @@ class OverlayService : Service() {
                 LinearLayout.LayoutParams(
                     0,
                     LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1f
+                    1.35f
                 )
             )
 
@@ -490,20 +451,11 @@ class OverlayService : Service() {
                 LinearLayout.LayoutParams(
                     0,
                     LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1f
+                    0.85f
                 )
             )
 
-            panel.measure(
-                View.MeasureSpec.makeMeasureSpec(
-                    dp(contentWidth),
-                    View.MeasureSpec.EXACTLY
-                ),
-                View.MeasureSpec.makeMeasureSpec(
-                    dp(420),
-                    View.MeasureSpec.AT_MOST
-                )
-            )
+            params.width = dp(320)
 
         } else {
             panel.orientation = LinearLayout.VERTICAL
@@ -514,97 +466,30 @@ class OverlayService : Service() {
 
             if (mode == "MANUAL") {
                 panel.addView(createSceneChoices())
-            } else {
-                panel.addView(
-                    text(
-                        "Khung hướng dẫn chụp ảnh sẽ hiển thị tại đây",
-                        11f
-                    )
-                )
             }
 
             panel.addView(createOpacityControls())
 
-            panel.measure(
-                View.MeasureSpec.makeMeasureSpec(
-                    dp(280),
-                    View.MeasureSpec.EXACTLY
-                ),
-                View.MeasureSpec.makeMeasureSpec(
-                    resources.displayMetrics.heightPixels,
-                    View.MeasureSpec.AT_MOST
-                )
-            )
+            params.width = dp(280)
         }
 
-        applyRotatedLayout(
-            panel.measuredWidth,
-            panel.measuredHeight,
-            rotationAngle
-        )
-
-        updateGuide()
-    }
-
-    private fun applyRotatedLayout(
-        measuredWidth: Int,
-        measuredHeight: Int,
-        angle: Float
-    ) {
-        val rotated = angle == 90f || angle == 270f
-
-        panel.rotation = angle
-
-        val windowWidth =
-            if (rotated) measuredHeight else measuredWidth
-
-        val windowHeight =
-            if (rotated) measuredWidth else measuredHeight
-
-        val childParams =
-            container.getChildAt(0).layoutParams
-                as FrameLayout.LayoutParams
-
-        childParams.width = measuredWidth
-        childParams.height = measuredHeight
-        childParams.gravity = Gravity.CENTER
-        panel.layoutParams = childParams
+        params.height = WindowManager.LayoutParams.WRAP_CONTENT
 
         container.layoutParams = FrameLayout.LayoutParams(
-            windowWidth,
-            windowHeight,
-            Gravity.CENTER
+            params.width,
+            FrameLayout.LayoutParams.WRAP_CONTENT
         )
 
-        params.width = windowWidth
-        params.height = windowHeight
-
         keepWindowOnScreen()
-
-        if (container.parent != null) {
-            wm.updateViewLayout(container, params)
-        }
-    }
-
-    private fun keepWindowOnScreen() {
-        val metrics = resources.displayMetrics
-
-        val maxX =
-            (metrics.widthPixels - params.width).coerceAtLeast(0)
-
-        val maxY =
-            (metrics.heightPixels - params.height).coerceAtLeast(0)
-
-        params.x = params.x.coerceIn(0, maxX)
-        params.y = params.y.coerceIn(0, maxY)
+        wm.updateViewLayout(container, params)
     }
 
     private fun renderBubble() {
+        panel.removeAllViews()
         panel.rotation = 0f
         panel.orientation = LinearLayout.VERTICAL
         panel.background = null
         panel.setPadding(0, 0, 0, 0)
-        panel.removeAllViews()
 
         val bubble = text("✦", 21f).apply {
             background = GradientDrawable(
@@ -615,43 +500,46 @@ class OverlayService : Service() {
                 )
             ).apply {
                 cornerRadius = dp(30).toFloat()
-                setStroke(
-                    dp(1),
-                    Color.argb(190, 220, 230, 245)
-                )
+                setStroke(dp(1), Color.argb(190, 220, 230, 245))
             }
 
-            layoutParams = LinearLayout.LayoutParams(
-                dp(48),
-                dp(48)
-            )
+            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
         }
 
         panel.addView(bubble)
 
-        container.layoutParams = FrameLayout.LayoutParams(
-            dp(48),
-            dp(48),
-            Gravity.CENTER
-        )
-
         params.width = dp(48)
         params.height = dp(48)
 
-        keepWindowOnScreen()
+        container.layoutParams = FrameLayout.LayoutParams(
+            dp(48),
+            dp(48)
+        )
 
         attachDrag(bubble) {
             expanded = true
             renderPanel()
         }
 
+        keepWindowOnScreen()
         wm.updateViewLayout(container, params)
     }
 
-    private fun attachDrag(
-        view: View,
-        onTap: (() -> Unit)? = null
-    ) {
+    private fun keepWindowOnScreen() {
+        val metrics = resources.displayMetrics
+
+        params.x = params.x.coerceIn(
+            0,
+            (metrics.widthPixels - params.width).coerceAtLeast(0)
+        )
+
+        params.y = params.y.coerceIn(
+            0,
+            (metrics.heightPixels - dp(80)).coerceAtLeast(0)
+        )
+    }
+
+    private fun attachDrag(view: View, onTap: (() -> Unit)? = null) {
         view.setOnTouchListener(object : View.OnTouchListener {
             var startX = 0
             var startY = 0
@@ -659,10 +547,7 @@ class OverlayService : Service() {
             var touchY = 0f
             var moved = false
 
-            override fun onTouch(
-                v: View,
-                event: MotionEvent
-            ): Boolean {
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         startX = params.x
@@ -687,7 +572,6 @@ class OverlayService : Service() {
                             keepWindowOnScreen()
                             wm.updateViewLayout(container, params)
                         }
-
                         return true
                     }
 
@@ -696,17 +580,14 @@ class OverlayService : Service() {
                         return true
                     }
                 }
-
                 return true
             }
         })
     }
 
     private fun updateOpacityText() {
-        if (this::opacityText.isInitialized) {
-            val percent =
-                (glassAlpha * 100 / 255).coerceIn(6, 96)
-
+        if (::opacityText.isInitialized) {
+            val percent = (glassAlpha * 100 / 255).coerceIn(6, 96)
             opacityText.text = "ĐỘ ĐẬM KÍNH: ${percent}%"
         }
     }
@@ -715,15 +596,11 @@ class OverlayService : Service() {
         orientationListener?.disable()
         orientationListener = null
 
-        if (this::container.isInitialized &&
-            container.parent != null
-        ) {
+        if (::container.isInitialized && container.parent != null) {
             wm.removeView(container)
         }
 
-        if (this::guideView.isInitialized &&
-            guideView.parent != null
-        ) {
+        if (::guideView.isInitialized && guideView.parent != null) {
             wm.removeView(guideView)
         }
 
