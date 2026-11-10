@@ -5,12 +5,16 @@ import android.app.AppOpsManager
 import android.app.Service
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -33,6 +37,15 @@ class OverlayService : Service() {
             "com.android.camera",
             "com.android.camera2"
         )
+
+        const val ACTION_AI_RESULT =
+            "vn.lekien.aicamoverlay.ACTION_AI_RESULT"
+
+        const val EXTRA_LABELS = "labels"
+        const val EXTRA_CONFIDENCES = "confidences"
+        const val EXTRA_BOXES = "boxes"
+        const val EXTRA_ANALYSIS_TIME = "analysisTime"
+        const val EXTRA_DETECTION_COUNT = "detectionCount"
     }
 
     private lateinit var wm: WindowManager
@@ -41,6 +54,7 @@ class OverlayService : Service() {
     private lateinit var panel: LinearLayout
     private lateinit var guideView: CompositionGuideView
     private lateinit var opacityText: TextView
+    private lateinit var aiStatusText: TextView
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -51,13 +65,79 @@ class OverlayService : Service() {
     private var selectedScene = "PHONG CẢNH"
     private var glassAlpha = 204
     private var cameraWasOpen = false
+    private var aiStatus = "AI: Đang chờ Smart Frame"
+    private var aiReceiverRegistered = false
 
-    // Ghi nhớ ứng dụng gần nhất được đưa lên trước.
     private var lastUsageQueryTime = 0L
     private var lastKnownForegroundPackage: String? = null
 
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
+
+    private val aiResultReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != ACTION_AI_RESULT) return
+
+            val labels = intent.getStringArrayListExtra(EXTRA_LABELS)
+                ?: arrayListOf()
+
+            val confidences =
+                intent.getFloatArrayExtra(EXTRA_CONFIDENCES)
+                    ?: floatArrayOf()
+
+            val boxes =
+                intent.getFloatArrayExtra(EXTRA_BOXES)
+                    ?: floatArrayOf()
+
+            val count = intent.getIntExtra(
+                EXTRA_DETECTION_COUNT,
+                labels.size
+            )
+
+            val analysisTime = intent.getLongExtra(
+                EXTRA_ANALYSIS_TIME,
+                0L
+            )
+
+            val results = mutableListOf<GuideDetection>()
+
+            val validCount = minOf(
+                count,
+                labels.size,
+                confidences.size,
+                boxes.size / 4
+            )
+
+            for (i in 0 until validCount) {
+                val offset = i * 4
+
+                results.add(
+                    GuideDetection(
+                        label = labels[i],
+                        confidence = confidences[i],
+                        left = boxes[offset],
+                        top = boxes[offset + 1],
+                        right = boxes[offset + 2],
+                        bottom = boxes[offset + 3]
+                    )
+                )
+            }
+
+            guideView.detections = results
+
+            aiStatus = if (results.isEmpty()) {
+                "AI: Chưa nhận diện được chủ thể"
+            } else {
+                "AI: ${results.size} đối tượng • ${analysisTime}ms"
+            }
+
+            if (::aiStatusText.isInitialized) {
+                aiStatusText.text = aiStatus
+            }
+
+            updateGuide()
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -65,6 +145,8 @@ class OverlayService : Service() {
         landscape =
             resources.configuration.orientation ==
                 Configuration.ORIENTATION_LANDSCAPE
+
+        registerAiReceiver()
 
         orientationListener = object : OrientationEventListener(this) {
             override fun onOrientationChanged(degrees: Int) {
@@ -75,7 +157,10 @@ class OverlayService : Service() {
 
                 if (newLandscape != landscape) {
                     landscape = newLandscape
-                    if (::panel.isInitialized && container.parent != null) {
+
+                    if (::panel.isInitialized &&
+                        container.parent != null
+                    ) {
                         renderPanel()
                         updateGuide()
                     }
@@ -86,6 +171,25 @@ class OverlayService : Service() {
         if (orientationListener?.canDetectOrientation() == true) {
             orientationListener?.enable()
         }
+    }
+
+    private fun registerAiReceiver() {
+        if (aiReceiverRegistered) return
+
+        val filter = IntentFilter(ACTION_AI_RESULT)
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(
+                aiResultReceiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(aiResultReceiver, filter)
+        }
+
+        aiReceiverRegistered = true
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -110,7 +214,8 @@ class OverlayService : Service() {
     }
 
     private fun hasUsageAccess(): Boolean {
-        val appOps = getSystemService(APP_OPS_SERVICE) as AppOpsManager
+        val appOps =
+            getSystemService(APP_OPS_SERVICE) as AppOpsManager
 
         return appOps.checkOpNoThrow(
             AppOpsManager.OPSTR_GET_USAGE_STATS,
@@ -122,13 +227,11 @@ class OverlayService : Service() {
     private fun isCameraForeground(): Boolean {
         if (!hasUsageAccess()) return false
 
-        val usage = getSystemService(USAGE_STATS_SERVICE)
-            as UsageStatsManager
+        val usage =
+            getSystemService(USAGE_STATS_SERVICE) as UsageStatsManager
 
         val end = System.currentTimeMillis()
 
-        // Lần đầu đọc lại 60 giây gần nhất.
-        // Các lần sau chỉ đọc sự kiện mới, có chồng lấn 1 giây.
         val begin = if (lastUsageQueryTime == 0L) {
             end - 60000L
         } else {
@@ -141,18 +244,13 @@ class OverlayService : Service() {
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
 
-            when (event.eventType) {
-                UsageEvents.Event.ACTIVITY_RESUMED -> {
-                    lastKnownForegroundPackage = event.packageName
-                }
+            if (event.eventType == UsageEvents.Event.ACTIVITY_RESUMED) {
+                lastKnownForegroundPackage = event.packageName
             }
         }
 
         lastUsageQueryTime = end
 
-        // Không xóa trạng thái chỉ vì không có sự kiện mới.
-        // Khi người dùng thực sự rời Camera, ứng dụng khác
-        // được đưa lên trước sẽ cập nhật package tại đây.
         return lastKnownForegroundPackage != null &&
             lastKnownForegroundPackage in CAMERA_PACKAGES
     }
@@ -165,10 +263,13 @@ class OverlayService : Service() {
 
             if (cameraOpen && !cameraWasOpen) {
                 cameraWasOpen = true
+                aiStatus = "AI: Đang chờ khung hình"
                 updateGuide()
+                updateAiStatus()
             } else if (!cameraOpen && cameraWasOpen) {
                 cameraWasOpen = false
 
+                guideView.detections = emptyList()
                 guideView.visibility = View.GONE
 
                 if (expanded) {
@@ -182,6 +283,12 @@ class OverlayService : Service() {
             }
 
             handler.postDelayed(this, 1000L)
+        }
+    }
+
+    private fun updateAiStatus() {
+        if (::aiStatusText.isInitialized) {
+            aiStatusText.text = aiStatus
         }
     }
 
@@ -298,13 +405,14 @@ class OverlayService : Service() {
 
         guideView.scene = selectedScene
         guideView.isLandscape = landscape
+        guideView.showCompositionGuides = mode == "MANUAL"
+
+        val shouldShow =
+            cameraWasOpen &&
+                (mode == "MANUAL" || guideView.detections.isNotEmpty())
 
         guideView.visibility =
-            if (cameraWasOpen && mode == "MANUAL") {
-                View.VISIBLE
-            } else {
-                View.GONE
-            }
+            if (shouldShow) View.VISIBLE else View.GONE
 
         guideView.invalidate()
     }
@@ -369,7 +477,9 @@ class OverlayService : Service() {
             orientation = LinearLayout.VERTICAL
         }
 
-        choices.addView(text("CHỌN KIỂU CHỤP", 10f, Color.LTGRAY))
+        choices.addView(
+            text("CHỌN KIỂU CHỤP", 10f, Color.LTGRAY)
+        )
 
         listOf(
             "PHONG CẢNH",
@@ -415,6 +525,16 @@ class OverlayService : Service() {
         }
 
         return choices
+    }
+
+    private fun createAiStatusView(): TextView {
+        aiStatusText = text(aiStatus, 10f, Color.rgb(174, 235, 185)).apply {
+            gravity = Gravity.CENTER
+            maxLines = 2
+            setPadding(dp(4), dp(5), dp(4), dp(5))
+        }
+
+        return aiStatusText
     }
 
     private fun createOpacityControls(): LinearLayout {
@@ -516,6 +636,7 @@ class OverlayService : Service() {
 
             left.addView(createHeader())
             left.addView(text("AI CAMERA • FLOW GLASS", 8f))
+            left.addView(createAiStatusView())
             left.addView(createModeRow())
 
             if (mode == "MANUAL") {
@@ -540,6 +661,7 @@ class OverlayService : Service() {
 
             panel.addView(createHeader())
             panel.addView(text("AI CAMERA • FLOW GLASS", 9f))
+            panel.addView(createAiStatusView())
             panel.addView(createModeRow())
 
             if (mode == "MANUAL") {
@@ -589,7 +711,8 @@ class OverlayService : Service() {
         params.width = dp(48)
         params.height = dp(48)
 
-        container.layoutParams = FrameLayout.LayoutParams(dp(48), dp(48))
+        container.layoutParams =
+            FrameLayout.LayoutParams(dp(48), dp(48))
 
         attachDrag(bubble) {
             expanded = true
@@ -614,7 +737,10 @@ class OverlayService : Service() {
         )
     }
 
-    private fun attachDrag(view: View, onTap: (() -> Unit)? = null) {
+    private fun attachDrag(
+        view: View,
+        onTap: (() -> Unit)? = null
+    ) {
         view.setOnTouchListener(object : View.OnTouchListener {
             var startX = 0
             var startY = 0
@@ -622,7 +748,10 @@ class OverlayService : Service() {
             var touchY = 0f
             var moved = false
 
-            override fun onTouch(v: View, event: MotionEvent): Boolean {
+            override fun onTouch(
+                v: View,
+                event: MotionEvent
+            ): Boolean {
                 when (event.action) {
                     MotionEvent.ACTION_DOWN -> {
                         startX = params.x
@@ -647,6 +776,7 @@ class OverlayService : Service() {
                             keepWindowOnScreen()
                             wm.updateViewLayout(container, params)
                         }
+
                         return true
                     }
 
@@ -655,6 +785,7 @@ class OverlayService : Service() {
                         return true
                     }
                 }
+
                 return true
             }
         })
@@ -662,7 +793,9 @@ class OverlayService : Service() {
 
     private fun updateOpacityText() {
         if (::opacityText.isInitialized) {
-            val percent = (glassAlpha * 100 / 255).coerceIn(6, 96)
+            val percent =
+                (glassAlpha * 100 / 255).coerceIn(6, 96)
+
             opacityText.text = "ĐỘ ĐẬM KÍNH: ${percent}%"
         }
     }
@@ -682,6 +815,14 @@ class OverlayService : Service() {
 
         orientationListener?.disable()
         orientationListener = null
+
+        if (aiReceiverRegistered) {
+            try {
+                unregisterReceiver(aiResultReceiver)
+            } catch (_: Exception) {
+            }
+            aiReceiverRegistered = false
+        }
 
         if (::container.isInitialized && container.parent != null) {
             wm.removeView(container)
