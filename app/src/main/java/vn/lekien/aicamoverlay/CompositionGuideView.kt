@@ -17,26 +17,31 @@ class CompositionGuideView(context: Context) : View(context) {
             invalidate()
         }
 
-    var guideRotation: Float = 0f
+    var isLandscape: Boolean = false
         set(value) {
             field = value
             invalidate()
         }
 
-    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(205, 255, 255, 255)
+    private val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(190, 255, 255, 255)
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.4f)
+    }
+
+    private val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(145, 190, 235, 205)
         style = Paint.Style.STROKE
         strokeWidth = dp(1.5f)
     }
 
-    private val softPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(125, 190, 235, 205)
-        style = Paint.Style.STROKE
-        strokeWidth = dp(2f)
+    private val pointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(200, 190, 235, 205)
+        style = Paint.Style.FILL
     }
 
-    private val pointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(210, 190, 235, 205)
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(25, 190, 235, 205)
         style = Paint.Style.FILL
     }
 
@@ -48,39 +53,46 @@ class CompositionGuideView(context: Context) : View(context) {
 
         if (width <= 0 || height <= 0) return
 
+        /*
+         * Vùng preview căn theo giao diện Camera Xiaomi.
+         * Không sử dụng toàn bộ màn hình.
+         *
+         * Dọc: tránh thanh công cụ trên và vùng nút chụp dưới.
+         * Ngang: chừa vùng an toàn ở cạnh phải cho điều khiển camera.
+         */
+        val left: Float
+        val top: Float
+        val right: Float
+        val bottom: Float
+
+        if (isLandscape) {
+            left = width * 0.06f
+            right = width * 0.84f
+            top = height * 0.10f
+            bottom = height * 0.90f
+        } else {
+            left = width * 0.08f
+            right = width * 0.92f
+            top = height * 0.14f
+            bottom = height * 0.74f
+        }
+
+        val safeArea = RectF(left, top, right, bottom)
+
         val save = canvas.save()
-
-        canvas.rotate(
-            guideRotation,
-            width / 2f,
-            height / 2f
-        )
-
-        val rotated = guideRotation == 90f ||
-            guideRotation == 270f
-
-        val logicalWidth =
-            if (rotated) height.toFloat() else width.toFloat()
-
-        val logicalHeight =
-            if (rotated) width.toFloat() else height.toFloat()
-
-        val left = logicalWidth * 0.08f
-        val right = logicalWidth * 0.92f
-        val top = logicalHeight * 0.13f
-        val bottom = logicalHeight * 0.87f
+        canvas.clipRect(safeArea)
 
         when (scene) {
             "PHONG CẢNH" -> drawLandscape(
-                canvas, left, top, right, bottom
+                canvas, safeArea
             )
 
             "CHÂN DUNG" -> drawPortrait(
-                canvas, left, top, right, bottom
+                canvas, safeArea
             )
 
             "TẠO DÁNG" -> drawPose(
-                canvas, left, top, right, bottom
+                canvas, safeArea
             )
         }
 
@@ -89,28 +101,33 @@ class CompositionGuideView(context: Context) : View(context) {
 
     private fun drawLandscape(
         canvas: Canvas,
-        left: Float,
-        top: Float,
-        right: Float,
-        bottom: Float
+        area: RectF
     ) {
-        val width = right - left
-        val height = bottom - top
+        val left = area.left
+        val top = area.top
+        val right = area.right
+        val bottom = area.bottom
 
-        // Khung ảnh và lưới quy tắc 1/3.
-        canvas.drawRect(left, top, right, bottom, linePaint)
+        val width = area.width()
+        val height = area.height()
+
+        canvas.drawRoundRect(
+            area,
+            dp(5f),
+            dp(5f),
+            framePaint
+        )
 
         val x1 = left + width / 3f
         val x2 = left + width * 2f / 3f
         val y1 = top + height / 3f
         val y2 = top + height * 2f / 3f
 
-        canvas.drawLine(x1, top, x1, bottom, softPaint)
-        canvas.drawLine(x2, top, x2, bottom, softPaint)
-        canvas.drawLine(left, y1, right, y1, softPaint)
-        canvas.drawLine(left, y2, right, y2, softPaint)
+        canvas.drawLine(x1, top, x1, bottom, guidePaint)
+        canvas.drawLine(x2, top, x2, bottom, guidePaint)
+        canvas.drawLine(left, y1, right, y1, guidePaint)
+        canvas.drawLine(left, y2, right, y2, guidePaint)
 
-        // Điểm giao giúp căn chủ thể.
         canvas.drawCircle(x1, y1, dp(4f), pointPaint)
         canvas.drawCircle(x2, y1, dp(4f), pointPaint)
         canvas.drawCircle(x1, y2, dp(4f), pointPaint)
@@ -119,19 +136,15 @@ class CompositionGuideView(context: Context) : View(context) {
 
     private fun drawPortrait(
         canvas: Canvas,
-        left: Float,
-        top: Float,
-        right: Float,
-        bottom: Float
+        area: RectF
     ) {
-        val width = right - left
-        val height = bottom - top
+        val width = area.width()
+        val height = area.height()
+        val centerX = area.centerX()
 
-        // Khung căn chỉnh chân dung.
         val faceWidth = width * 0.34f
-        val faceHeight = height * 0.30f
-        val centerX = (left + right) / 2f
-        val faceTop = top + height * 0.12f
+        val faceHeight = height * 0.28f
+        val faceTop = area.top + height * 0.10f
 
         val face = RectF(
             centerX - faceWidth / 2f,
@@ -140,21 +153,21 @@ class CompositionGuideView(context: Context) : View(context) {
             faceTop + faceHeight
         )
 
-        canvas.drawOval(face, softPaint)
+        canvas.drawOval(face, guidePaint)
 
-        // Đường mắt.
         val eyeY = face.top + face.height() * 0.42f
+
         canvas.drawLine(
-            face.left - dp(8f),
+            face.left - dp(7f),
             eyeY,
-            face.right + dp(8f),
+            face.right + dp(7f),
             eyeY,
-            linePaint
+            framePaint
         )
 
-        // Khung vai và thân trên.
         val shoulderPath = Path().apply {
-            moveTo(centerX - width * 0.34f, bottom)
+            moveTo(centerX - width * 0.34f, area.bottom)
+
             cubicTo(
                 centerX - width * 0.32f,
                 face.bottom + height * 0.05f,
@@ -163,73 +176,62 @@ class CompositionGuideView(context: Context) : View(context) {
                 centerX,
                 face.bottom + height * 0.04f
             )
+
             cubicTo(
                 centerX + width * 0.20f,
                 face.bottom + height * 0.04f,
                 centerX + width * 0.32f,
                 face.bottom + height * 0.05f,
                 centerX + width * 0.34f,
-                bottom
+                area.bottom
             )
         }
 
-        canvas.drawPath(shoulderPath, linePaint)
+        canvas.drawPath(shoulderPath, framePaint)
 
-        // Đường căn giữa khuôn mặt.
         canvas.drawLine(
             centerX,
-            top,
+            area.top,
             centerX,
-            bottom,
-            softPaint
+            area.bottom,
+            guidePaint
         )
     }
 
     private fun drawPose(
         canvas: Canvas,
-        left: Float,
-        top: Float,
-        right: Float,
-        bottom: Float
+        area: RectF
     ) {
-        val width = right - left
-        val height = bottom - top
-        val cx = (left + right) / 2f
+        val width = area.width()
+        val height = area.height()
+        val cx = area.centerX()
 
-        // Khung toàn thân.
         canvas.drawRoundRect(
-            RectF(left, top, right, bottom),
+            area,
             dp(18f),
             dp(18f),
-            linePaint
+            framePaint
         )
 
-        // Đường trục cơ thể.
-        val headY = top + height * 0.13f
-        val neckY = top + height * 0.23f
-        val shoulderY = top + height * 0.30f
-        val hipY = top + height * 0.59f
-        val kneeY = top + height * 0.79f
-        val footY = bottom - height * 0.04f
+        val headY = area.top + height * 0.13f
+        val neckY = area.top + height * 0.23f
+        val shoulderY = area.top + height * 0.30f
+        val hipY = area.top + height * 0.59f
+        val kneeY = area.top + height * 0.79f
+        val footY = area.bottom - height * 0.04f
 
         val headRadius = width * 0.075f
 
-        canvas.drawCircle(
-            cx,
-            headY,
-            headRadius,
-            softPaint
-        )
+        canvas.drawCircle(cx, headY, headRadius, guidePaint)
 
         canvas.drawLine(
             cx,
             headY + headRadius,
             cx,
             hipY,
-            softPaint
+            guidePaint
         )
 
-        // Vai và tay.
         val leftShoulder = cx - width * 0.18f
         val rightShoulder = cx + width * 0.18f
 
@@ -238,32 +240,31 @@ class CompositionGuideView(context: Context) : View(context) {
             shoulderY,
             rightShoulder,
             shoulderY,
-            linePaint
+            framePaint
         )
 
         canvas.drawLine(
             leftShoulder,
             shoulderY,
-            left + width * 0.12f,
-            hipY * 0.55f + shoulderY * 0.45f,
-            softPaint
+            area.left + width * 0.12f,
+            shoulderY + height * 0.12f,
+            guidePaint
         )
 
         canvas.drawLine(
             rightShoulder,
             shoulderY,
-            right - width * 0.12f,
-            hipY * 0.55f + shoulderY * 0.45f,
-            softPaint
+            area.right - width * 0.12f,
+            shoulderY + height * 0.12f,
+            guidePaint
         )
 
-        // Hông và chân.
         canvas.drawLine(
             cx - width * 0.13f,
             hipY,
             cx + width * 0.13f,
             hipY,
-            linePaint
+            framePaint
         )
 
         canvas.drawLine(
@@ -271,7 +272,7 @@ class CompositionGuideView(context: Context) : View(context) {
             hipY,
             cx - width * 0.15f,
             kneeY,
-            softPaint
+            guidePaint
         )
 
         canvas.drawLine(
@@ -279,7 +280,7 @@ class CompositionGuideView(context: Context) : View(context) {
             hipY,
             cx + width * 0.15f,
             kneeY,
-            softPaint
+            guidePaint
         )
 
         canvas.drawLine(
@@ -287,7 +288,7 @@ class CompositionGuideView(context: Context) : View(context) {
             kneeY,
             cx - width * 0.20f,
             footY,
-            softPaint
+            guidePaint
         )
 
         canvas.drawLine(
@@ -295,10 +296,9 @@ class CompositionGuideView(context: Context) : View(context) {
             kneeY,
             cx + width * 0.20f,
             footY,
-            softPaint
+            guidePaint
         )
 
-        // Các khớp xương.
         val joints = listOf(
             cx to neckY,
             leftShoulder to shoulderY,
