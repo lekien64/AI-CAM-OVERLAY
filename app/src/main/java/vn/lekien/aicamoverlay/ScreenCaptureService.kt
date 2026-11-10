@@ -73,7 +73,7 @@ class ScreenCaptureService : Service() {
                 intent?.getParcelableExtra("projectionData")
             }
 
-        if (resultCode != RESULT_OK || projectionData == null) {
+        if (resultCode != android.app.Activity.RESULT_OK || projectionData == null) {
             Log.e(TAG, "Thiếu dữ liệu cấp quyền MediaProjection")
             stopSelf()
             return START_NOT_STICKY
