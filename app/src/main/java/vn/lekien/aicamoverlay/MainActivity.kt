@@ -2,8 +2,9 @@
 package vn.lekien.aicamoverlay
 
 import android.app.Activity
-import android.os.Bundle
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
+import android.os.Bundle
 import android.net.Uri
 import android.provider.Settings
 import android.content.res.Configuration
@@ -17,6 +18,8 @@ import android.widget.TextView
 class MainActivity : Activity() {
 
     private lateinit var status: TextView
+
+    private val projectionRequestCode = 4101
 
     private fun dp(v: Int): Int =
         (v * resources.displayMetrics.density).toInt()
@@ -43,6 +46,7 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER
         setTextColor(Color.WHITE)
         setTypeface(null, Typeface.BOLD)
+
         background = GradientDrawable(
             GradientDrawable.Orientation.LEFT_RIGHT,
             intArrayOf(
@@ -53,6 +57,7 @@ class MainActivity : Activity() {
             cornerRadius = dp(40).toFloat()
             setStroke(dp(1), Color.argb(150, 210, 220, 235))
         }
+
         setPadding(dp(18), dp(15), dp(18), dp(15))
         setOnClickListener { action() }
     }
@@ -70,12 +75,14 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
+
             setPadding(
                 dp(if (landscape) 32 else 24),
                 dp(24),
                 dp(if (landscape) 32 else 24),
                 dp(24)
             )
+
             background = GradientDrawable(
                 GradientDrawable.Orientation.TL_BR,
                 intArrayOf(
@@ -92,6 +99,7 @@ class MainActivity : Activity() {
             } else {
                 LinearLayout.VERTICAL
             }
+
             gravity = Gravity.CENTER
             setPadding(dp(20), dp(24), dp(20), dp(24))
             background = glassBackground(30)
@@ -116,7 +124,7 @@ class MainActivity : Activity() {
         }
 
         val subtitle = TextView(this).apply {
-            text = "FLOW GLASS PHOTOGRAPHY ASSISTANT"
+            text = "SMART FRAME • FLOW GLASS"
             textSize = 11f
             setTextColor(Color.rgb(190, 198, 212))
             gravity = Gravity.CENTER
@@ -150,11 +158,20 @@ class MainActivity : Activity() {
             status.text = "Đang bật lớp phủ AI CAM"
         }
 
+        val smartFrameButton = pill("BẬT SMART FRAME") {
+            requestScreenCapture()
+        }
+
         val stopButton = pill("TẮT AI CAM OVERLAY") {
+            stopService(
+                Intent(this@MainActivity, ScreenCaptureService::class.java)
+            )
+
             stopService(
                 Intent(this@MainActivity, OverlayService::class.java)
             )
-            status.text = "Đã yêu cầu tắt lớp phủ"
+
+            status.text = "Đã yêu cầu dừng AI CAM và Smart Frame"
         }
 
         info.addView(title)
@@ -164,6 +181,7 @@ class MainActivity : Activity() {
         for (button in listOf(
             permissionButton,
             startButton,
+            smartFrameButton,
             stopButton
         )) {
             controls.addView(
@@ -180,16 +198,24 @@ class MainActivity : Activity() {
         if (landscape) {
             glass.addView(
                 info,
-                LinearLayout.LayoutParams(0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
             )
+
             glass.addView(
                 controls,
-                LinearLayout.LayoutParams(0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
             )
         } else {
             glass.addView(info)
+
             glass.addView(
                 controls,
                 LinearLayout.LayoutParams(
@@ -209,6 +235,44 @@ class MainActivity : Activity() {
 
         setContentView(root)
         updateStatus()
+    }
+
+    private fun requestScreenCapture() {
+        val manager =
+            getSystemService(MEDIA_PROJECTION_SERVICE)
+                as MediaProjectionManager
+
+        startActivityForResult(
+            manager.createScreenCaptureIntent(),
+            projectionRequestCode
+        )
+    }
+
+    @Deprecated("Using activity result for MediaProjection permission")
+    override fun onActivityResult(
+        requestCode: Int,
+        resultCode: Int,
+        data: Intent?
+    ) {
+        super.onActivityResult(requestCode, resultCode, data)
+
+        if (requestCode != projectionRequestCode) return
+
+        if (resultCode == RESULT_OK && data != null) {
+            val serviceIntent = Intent(
+                this,
+                ScreenCaptureService::class.java
+            ).apply {
+                putExtra("resultCode", resultCode)
+                putExtra("projectionData", data)
+            }
+
+            startForegroundService(serviceIntent)
+
+            status.text = "Đã cấp quyền Smart Frame"
+        } else {
+            status.text = "Bạn chưa cấp quyền chụp màn hình"
+        }
     }
 
     override fun onResume() {
