@@ -52,6 +52,10 @@ class OverlayService : Service() {
     private var glassAlpha = 204
     private var cameraWasOpen = false
 
+    // Ghi nhớ ứng dụng gần nhất được đưa lên trước.
+    private var lastUsageQueryTime = 0L
+    private var lastKnownForegroundPackage: String? = null
+
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
 
@@ -122,30 +126,35 @@ class OverlayService : Service() {
             as UsageStatsManager
 
         val end = System.currentTimeMillis()
-        val begin = end - 15000L
+
+        // Lần đầu đọc lại 60 giây gần nhất.
+        // Các lần sau chỉ đọc sự kiện mới, có chồng lấn 1 giây.
+        val begin = if (lastUsageQueryTime == 0L) {
+            end - 60000L
+        } else {
+            (lastUsageQueryTime - 1000L).coerceAtLeast(0L)
+        }
+
         val events = usage.queryEvents(begin, end)
         val event = UsageEvents.Event()
-
-        var latestPackage: String? = null
 
         while (events.hasNextEvent()) {
             events.getNextEvent(event)
 
             when (event.eventType) {
                 UsageEvents.Event.ACTIVITY_RESUMED -> {
-                    latestPackage = event.packageName
-                }
-
-                UsageEvents.Event.ACTIVITY_PAUSED -> {
-                    if (latestPackage == event.packageName) {
-                        latestPackage = null
-                    }
+                    lastKnownForegroundPackage = event.packageName
                 }
             }
         }
 
-        return latestPackage != null &&
-            latestPackage in CAMERA_PACKAGES
+        lastUsageQueryTime = end
+
+        // Không xóa trạng thái chỉ vì không có sự kiện mới.
+        // Khi người dùng thực sự rời Camera, ứng dụng khác
+        // được đưa lên trước sẽ cập nhật package tại đây.
+        return lastKnownForegroundPackage != null &&
+            lastKnownForegroundPackage in CAMERA_PACKAGES
     }
 
     private val cameraMonitor = object : Runnable {
