@@ -67,18 +67,33 @@ class ScreenCaptureService : Service() {
                         "Số đối tượng: ${result.detections.size}"
                 )
 
+                val labels = ArrayList<String>()
+                val confidences = ArrayList<Float>()
+                val boxes = ArrayList<Float>()
+
                 result.detections.forEach { item ->
+
                     Log.d(
                         TAG,
                         "AI OBJECT: ${item.label} | " +
-                            "confidence=${item.confidence} | " +
-                            "box=(" +
-                            "${item.normalizedLeft}, " +
-                            "${item.normalizedTop}, " +
-                            "${item.normalizedRight}, " +
-                            "${item.normalizedBottom})"
+                            "confidence=${item.confidence}"
                     )
+
+                    labels.add(item.label)
+                    confidences.add(item.confidence)
+
+                    boxes.add(item.normalizedLeft)
+                    boxes.add(item.normalizedTop)
+                    boxes.add(item.normalizedRight)
+                    boxes.add(item.normalizedBottom)
                 }
+
+                sendAiResult(
+                    labels = labels,
+                    confidences = confidences,
+                    boxes = boxes,
+                    analysisTime = result.analysisTimeMs
+                )
             }
 
             override fun onError(error: Exception) {
@@ -253,6 +268,54 @@ class ScreenCaptureService : Service() {
         Log.d(TAG, "AI Vision Engine đã kết nối")
     }
 
+    private fun sendAiResult(
+        labels: ArrayList<String>,
+        confidences: ArrayList<Float>,
+        boxes: ArrayList<Float>,
+        analysisTime: Long
+    ) {
+        val confidenceArray = FloatArray(confidences.size) {
+            confidences[it]
+        }
+
+        val boxArray = FloatArray(boxes.size) {
+            boxes[it]
+        }
+
+        val resultIntent = Intent(
+            OverlayService.ACTION_AI_RESULT
+        ).apply {
+            setPackage(packageName)
+
+            putStringArrayListExtra(
+                OverlayService.EXTRA_LABELS,
+                labels
+            )
+
+            putExtra(
+                OverlayService.EXTRA_CONFIDENCES,
+                confidenceArray
+            )
+
+            putExtra(
+                OverlayService.EXTRA_BOXES,
+                boxArray
+            )
+
+            putExtra(
+                OverlayService.EXTRA_ANALYSIS_TIME,
+                analysisTime
+            )
+
+            putExtra(
+                OverlayService.EXTRA_DETECTION_COUNT,
+                labels.size
+            )
+        }
+
+        sendBroadcast(resultIntent)
+    }
+
     private fun processLatestFrame(reader: ImageReader) {
 
         val image = try {
@@ -293,7 +356,7 @@ class ScreenCaptureService : Service() {
 
     /**
      * Chuyển Image RGBA_8888 thành Bitmap.
-     * Xử lý cả rowStride và pixelStride để tránh lệch ảnh.
+     * Xử lý rowStride và pixelStride để tránh lệch ảnh.
      */
     private fun imageToBitmap(image: Image): Bitmap? {
 
