@@ -46,6 +46,12 @@ class OverlayService : Service() {
         const val EXTRA_BOXES = "boxes"
         const val EXTRA_ANALYSIS_TIME = "analysisTime"
         const val EXTRA_DETECTION_COUNT = "detectionCount"
+
+        const val EXTRA_IMAGE_WIDTH = "imageWidth"
+        const val EXTRA_IMAGE_HEIGHT = "imageHeight"
+        const val EXTRA_FRAME_NUMBER = "frameNumber"
+        const val EXTRA_AI_ERROR = "aiError"
+        const val EXTRA_AI_MESSAGE = "aiMessage"
     }
 
     private lateinit var wm: WindowManager
@@ -99,6 +105,35 @@ class OverlayService : Service() {
                 0L
             )
 
+            val width = intent.getIntExtra(
+                EXTRA_IMAGE_WIDTH,
+                0
+            )
+
+            val height = intent.getIntExtra(
+                EXTRA_IMAGE_HEIGHT,
+                0
+            )
+
+            val frame = intent.getLongExtra(
+                EXTRA_FRAME_NUMBER,
+                0L
+            )
+
+            val error = intent.getStringExtra(
+                EXTRA_AI_ERROR
+            ).orEmpty()
+
+            val message = intent.getStringExtra(
+                EXTRA_AI_MESSAGE
+            ).orEmpty()
+
+            if (error.isNotEmpty()) {
+                aiStatus = "AI LỖI: $error"
+                updateAiStatus()
+                return
+            }
+
             val results = mutableListOf<GuideDetection>()
 
             val validCount = minOf(
@@ -126,15 +161,16 @@ class OverlayService : Service() {
             guideView.detections = results
 
             aiStatus = if (results.isEmpty()) {
-                "AI: Chưa nhận diện được chủ thể"
+                "AI: Ảnh ${width}x${height} • Khung #$frame • 0 đối tượng • ${analysisTime}ms"
             } else {
-                "AI: ${results.size} đối tượng • ${analysisTime}ms"
+                "AI: ${results.size} đối tượng • ${width}x${height} • ${analysisTime}ms"
             }
 
-            if (::aiStatusText.isInitialized) {
-                aiStatusText.text = aiStatus
+            if (message.isNotEmpty() && results.isEmpty()) {
+                aiStatus += "\n$message"
             }
 
+            updateAiStatus()
             updateGuide()
         }
     }
@@ -530,7 +566,7 @@ class OverlayService : Service() {
     private fun createAiStatusView(): TextView {
         aiStatusText = text(aiStatus, 10f, Color.rgb(174, 235, 185)).apply {
             gravity = Gravity.CENTER
-            maxLines = 2
+            maxLines = 3
             setPadding(dp(4), dp(5), dp(4), dp(5))
         }
 
