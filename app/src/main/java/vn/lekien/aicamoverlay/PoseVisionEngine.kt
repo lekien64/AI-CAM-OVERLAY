@@ -7,6 +7,7 @@ import android.util.Log
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.PoseDetector
+import com.google.mlkit.vision.pose.PoseLandmark
 import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -26,7 +27,42 @@ class PoseVisionEngine {
         val analysisTimeMs: Long
     ) {
         val personDetected: Boolean
-            get() = points.count { it.confidence >= 0.5f } >= 5
+            get() {
+                val reliable = points
+                    .filter { it.confidence >= 0.50f }
+                    .map { it.type }
+                    .toSet()
+
+                val faceAnchors = listOf(
+                    PoseLandmark.NOSE,
+                    PoseLandmark.LEFT_EYE,
+                    PoseLandmark.RIGHT_EYE,
+                    PoseLandmark.LEFT_EAR,
+                    PoseLandmark.RIGHT_EAR
+                ).count { it in reliable }
+
+                val leftShoulder =
+                    PoseLandmark.LEFT_SHOULDER in reliable
+                val rightShoulder =
+                    PoseLandmark.RIGHT_SHOULDER in reliable
+
+                val leftHip =
+                    PoseLandmark.LEFT_HIP in reliable
+                val rightHip =
+                    PoseLandmark.RIGHT_HIP in reliable
+
+                val hasFaceAndBody =
+                    faceAnchors >= 2 &&
+                    (leftShoulder || rightShoulder)
+
+                val hasTorsoWithoutVisibleFace =
+                    leftShoulder &&
+                    rightShoulder &&
+                    (leftHip || rightHip)
+
+                return hasFaceAndBody ||
+                    hasTorsoWithoutVisibleFace
+            }
     }
 
     interface Listener {
@@ -160,22 +196,22 @@ class PoseVisionEngine {
                     val elapsed =
                         SystemClock.elapsedRealtime() - startTime
 
+                    val result = PoseResult(
+                        imageWidth = imageWidth,
+                        imageHeight = imageHeight,
+                        points = points,
+                        analysisTimeMs = elapsed
+                    )
+
                     Log.d(
                         TAG,
                         "POSE RESULT | " +
                             "points=${points.size}/33 | " +
-                            "person=${points.size >= 5} | " +
+                            "person=${result.personDetected} | " +
                             "time=${elapsed}ms"
                     )
 
-                    listener.onResult(
-                        PoseResult(
-                            imageWidth = imageWidth,
-                            imageHeight = imageHeight,
-                            points = points,
-                            analysisTimeMs = elapsed
-                        )
-                    )
+                    listener.onResult(result)
                 }
                 .addOnFailureListener { error ->
 
