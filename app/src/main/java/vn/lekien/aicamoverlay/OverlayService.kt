@@ -316,6 +316,7 @@ class OverlayService : Service() {
                 cameraWasOpen = false
 
                 guideView.detections = emptyList()
+                guideView.posePoints = emptyList()
                 guideView.visibility = View.GONE
 
                 if (expanded) {
@@ -453,9 +454,15 @@ class OverlayService : Service() {
         guideView.isLandscape = landscape
         guideView.showCompositionGuides = mode == "MANUAL"
 
+        val hasDetectedPerson = guideView.posePoints.size >= 5
+
         val shouldShow =
             cameraWasOpen &&
-                (mode == "MANUAL" || guideView.detections.isNotEmpty())
+                (
+                    mode == "MANUAL" ||
+                    guideView.detections.isNotEmpty() ||
+                    hasDetectedPerson
+                )
 
         guideView.visibility =
             if (shouldShow) View.VISIBLE else View.GONE
