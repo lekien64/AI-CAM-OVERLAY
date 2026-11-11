@@ -260,6 +260,38 @@ class ScreenCaptureService : Service() {
             }
         }
 
+    private val sceneListener =
+        object : SceneVisionEngine.Listener {
+
+            override fun onResult(
+                result: SceneVisionEngine.AnalysisResult
+            ) {
+                Log.d(
+                    TAG,
+                    "SCENE ANALYSIS | " +
+                        "time=${result.analysisTimeMs}ms | " +
+                        "labels=${result.labels.size}"
+                )
+
+                result.labels.forEach { item ->
+                    Log.d(
+                        TAG,
+                        "SCENE CLASS | " +
+                            "${item.text} | " +
+                            "confidence=${item.confidence}"
+                    )
+                }
+            }
+
+            override fun onError(error: Exception) {
+                Log.e(
+                    TAG,
+                    "Scene Vision phân tích thất bại",
+                    error
+                )
+            }
+        }
+
     @Volatile
     private var latestBitmapStats = BitmapStats(0, 0)
 
@@ -389,6 +421,7 @@ class ScreenCaptureService : Service() {
         aiVisionEngine = AiVisionEngine()
         poseVisionEngine = PoseVisionEngine()
         faceVisionEngine = FaceVisionEngine()
+        sceneVisionEngine = SceneVisionEngine()
 
         projection.registerCallback(
             projectionCallback,
@@ -434,6 +467,7 @@ class ScreenCaptureService : Service() {
         Log.d(TAG, "AI Vision Engine đã kết nối")
         Log.d(TAG, "Pose Vision Engine đã kết nối")
         Log.d(TAG, "Face Vision Engine đã kết nối")
+        Log.d(TAG, "Scene Vision Engine đã kết nối")
 
         sendAiError("Đang chờ khung hình đầu tiên")
     }
@@ -557,6 +591,13 @@ class ScreenCaptureService : Service() {
                 "BITMAP CHECK | " +
                     "luma=${latestBitmapStats.averageLuma}/255 | " +
                     "visible=${latestBitmapStats.visibleRatio}%"
+            )
+
+            // Scene Detection tự tạo bản sao Bitmap.
+            sceneVisionEngine?.analyze(
+                bitmap = bitmap,
+                rotationDegrees = 0,
+                listener = sceneListener
             )
 
             // Face Detection tự sao chép bitmap và giới hạn nhịp 500ms.
@@ -698,6 +739,9 @@ class ScreenCaptureService : Service() {
             imageReader?.close()
             imageReader = null
 
+            sceneVisionEngine?.close()
+            sceneVisionEngine = null
+
             faceVisionEngine?.close()
             faceVisionEngine = null
 
@@ -722,9 +766,9 @@ class ScreenCaptureService : Service() {
             Log.e(TAG, "Lỗi khi giải phóng tài nguyên", e)
         }
 
-                Log.d(
+        Log.d(
             TAG,
-            "Smart Frame, AI Vision, Pose Vision và Face Vision đã tắt"
+            "Smart Frame, AI Vision, Pose Vision, Face Vision và Scene Vision đã tắt"
         )
 
         sendBroadcast(
