@@ -33,5 +33,9 @@ android {
 }
 
 dependencies {
+    // Nhận diện vật thể hiện tại
     implementation("com.google.mlkit:object-detection:17.0.2")
+
+    // Nhận diện 33 điểm khớp cơ thể, chạy offline
+    implementation("com.google.mlkit:pose-detection:18.0.0-beta5")
 }
