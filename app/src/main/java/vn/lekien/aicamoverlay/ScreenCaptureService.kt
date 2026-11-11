@@ -71,6 +71,7 @@ class ScreenCaptureService : Service() {
     private var aiVisionEngine: AiVisionEngine? = null
     private var poseVisionEngine: PoseVisionEngine? = null
     private var faceVisionEngine: FaceVisionEngine? = null
+    private var sceneVisionEngine: SceneVisionEngine? = null
 
     private var firstFrameLogged = false
     private var capturedFrameCount = 0L
