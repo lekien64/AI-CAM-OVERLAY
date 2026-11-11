@@ -204,20 +204,14 @@ class OverlayService : Service() {
         orientationListener = object : OrientationEventListener(this) {
             override fun onOrientationChanged(degrees: Int) {
                 if (degrees == ORIENTATION_UNKNOWN) return
-
                 val newLandscape =
                     degrees in 60..120 || degrees in 240..300
 
                 if (newLandscape != landscape) {
                     landscape = newLandscape
-
-                    if (::panel.isInitialized &&
-                        ::container.isInitialized &&
-                        container.parent != null
-                    ) {
-                        renderPanel()
-                        updateGuide()
-                    }
+                    // Chỉ cập nhật hướng khung hướng dẫn camera.
+                    // Bảng nổi không dựng lại khi xoay máy.
+                    updateGuide()
                 }
             }
         }
@@ -409,8 +403,9 @@ class OverlayService : Service() {
     private fun actionButton(
         value: String,
         selected: Boolean = false,
+        textSize: Float = 13f,
         action: () -> Unit
-    ) = text(value, 13f).apply {
+    ) = text(value, textSize).apply {
         background = pillBackground(selected)
         setTypeface(null, Typeface.BOLD)
         setOnClickListener { action() }
@@ -521,87 +516,51 @@ class OverlayService : Service() {
         guideView.invalidate()
     }
 
-    private fun createHeader(): LinearLayout {
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        val title = text("✦  AI CAM", 18f).apply {
-            gravity = Gravity.CENTER_VERTICAL or Gravity.START
-            setTypeface(null, Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(0, dp(38), 1f)
-        }
-
-        val minimize = actionButton("−") {
-            expanded = false
-            renderPanel()
-        }
-
-        header.addView(title)
-        header.addView(minimize)
-        attachDrag(title)
-
-        return header
-    }
-
     private fun createModeRow(): LinearLayout {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-
         row.addView(
-            actionButton("AUTO", mode == "AUTO") {
+            actionButton("AUTO", mode == "AUTO", 9.1f) {
                 mode = "AUTO"
                 renderPanel()
                 updateGuide()
             },
-            LinearLayout.LayoutParams(0, dp(38), 1f).apply {
-                marginEnd = dp(4)
-            }
+            LinearLayout.LayoutParams(0, dp(27), 1f).apply { marginEnd = dp(3) }
         )
-
         row.addView(
-            actionButton("MANUAL", mode == "MANUAL") {
+            actionButton("MANUAL", mode == "MANUAL", 9.1f) {
                 mode = "MANUAL"
                 renderPanel()
                 updateGuide()
             },
-            LinearLayout.LayoutParams(0, dp(38), 1f).apply {
-                marginStart = dp(4)
-            }
+            LinearLayout.LayoutParams(0, dp(27), 1f).apply { marginStart = dp(3) }
         )
-
         return row
     }
 
     private fun createSmartFrameButton(): TextView {
-        val label = if (smartFrameActive) {
-            "SMART FRAME: ĐANG CHẠY"
-        } else {
-            "BẬT SMART FRAME"
-        }
-
-        return actionButton(label, smartFrameActive) {
+        val label = if (smartFrameActive) "SMART FRAME: ĐANG CHẠY" else "BẬT SMART FRAME"
+        return actionButton(label, smartFrameActive, 6.5f) {
             if (smartFrameActive) {
                 aiStatus = "AI: Smart Frame đang chạy"
                 updateAiStatus()
             } else {
                 try {
-                    val intent = Intent(
-                        this,
-                        SmartFramePermissionActivity::class.java
-                    ).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-
-                    startActivity(intent)
+                    startActivity(
+                        Intent(this, SmartFramePermissionActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
                 } catch (error: Exception) {
                     aiStatus = "Không mở được cấp quyền: ${error.message}"
                     updateAiStatus()
                 }
             }
+        }.apply {
+            setPadding(dp(3), dp(1), dp(3), dp(1))
+            minHeight = dp(22)
+            maxLines = 1
         }
     }
 
@@ -675,150 +634,104 @@ class OverlayService : Service() {
     }
 
     private fun createOpacityControls(): LinearLayout {
-        val column = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
-
-        opacityText = text("", 10f)
-
+        opacityText = text("", 8f).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, dp(4), 0)
+        }
         val slider = SeekBar(this).apply {
             max = 90
-            progress = (glassAlpha * 100 / 255)
-                .coerceIn(6, 96) - 6
-
-            progressTintList =
-                android.content.res.ColorStateList.valueOf(Color.WHITE)
-
-            thumbTintList =
-                android.content.res.ColorStateList.valueOf(Color.WHITE)
-
-            setOnSeekBarChangeListener(
-                object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(
-                        seekBar: SeekBar?,
-                        progress: Int,
-                        fromUser: Boolean
-                    ) {
-                        glassAlpha = (progress + 6) * 255 / 100
-                        panel.background = glassBackground()
-                        updateOpacityText()
-                    }
-
-                    override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                    override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            progress = (glassAlpha * 100 / 255).coerceIn(6, 96) - 6
+            progressTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            thumbTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            setPadding(0, 0, 0, 0)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    glassAlpha = (progress + 6) * 255 / 100
+                    panel.background = glassBackground()
+                    updateOpacityText()
                 }
-            )
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
         }
-
-        column.addView(opacityText)
-        column.addView(slider)
-
-        val close = TextView(this).apply {
-            text = "×"
-            textSize = 22f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(Color.rgb(43, 48, 59))
-                setStroke(dp(1), Color.argb(180, 220, 230, 245))
-            }
-
-            setOnClickListener {
-                stopAllServices()
-            }
-
-            layoutParams = LinearLayout.LayoutParams(
-                dp(38),
-                dp(38)
-            ).apply {
-                gravity = Gravity.END
-                topMargin = dp(3)
-            }
-        }
-
-        column.addView(close)
+        val dragHandle = text("✦", 12f)
+        attachDrag(dragHandle)
+        row.addView(dragHandle, LinearLayout.LayoutParams(dp(18), dp(28)))
+        row.addView(opacityText, LinearLayout.LayoutParams(-2, dp(28)))
+        row.addView(slider, LinearLayout.LayoutParams(0, dp(28), 1f))
         updateOpacityText()
+        return row
+    }
 
-        return column
+    private fun createSideControls(): LinearLayout {
+        val side = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        }
+        val minimize = actionButton("−", false, 13f) {
+            expanded = false
+            renderPanel()
+        }.apply { layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)) }
+        val close = actionButton("×", false, 17f) {
+            stopAllServices()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(dp(30), dp(30)).apply {
+                topMargin = dp(4)
+            }
+        }
+        val hints = text(
+            "HƯỚNG DẪN\n\nAUTO\nTự chọn bố cục\n\nMANUAL\nTự chọn cảnh",
+            7.5f,
+            Color.LTGRAY
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            maxLines = 10
+            setPadding(dp(2), dp(8), dp(2), 0)
+        }
+        side.addView(minimize)
+        side.addView(close)
+        side.addView(hints, LinearLayout.LayoutParams(-1, 0, 1f))
+        return side
     }
 
     private fun renderPanel() {
         panel.removeAllViews()
         panel.rotation = 0f
-
         if (!expanded) {
             renderBubble()
             return
         }
 
+        panel.orientation = LinearLayout.HORIZONTAL
         panel.background = glassBackground()
-        panel.setPadding(dp(8), dp(6), dp(8), dp(7))
+        panel.setPadding(dp(7), dp(5), dp(7), dp(5))
 
-        if (landscape) {
-            panel.orientation = LinearLayout.HORIZONTAL
-
-            val left = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-            }
-
-            val right = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setPadding(dp(5), 0, 0, 0)
-            }
-
-            left.addView(createHeader())
-            left.addView(text("AI CAMERA • FLOW GLASS", 8f))
-            left.addView(createAiStatusView())
-            left.addView(createModeRow())
-            left.addView(createSmartFrameButton())
-
-            if (mode == "MANUAL") {
-                left.addView(createSceneChoices())
-            }
-
-            right.addView(createOpacityControls())
-
-            panel.addView(
-                left,
-                LinearLayout.LayoutParams(0, -2, 1.35f)
-            )
-
-            panel.addView(
-                right,
-                LinearLayout.LayoutParams(0, -2, 0.85f)
-            )
-
-            params.width = dp(320)
-        } else {
-            panel.orientation = LinearLayout.VERTICAL
-
-            panel.addView(createHeader())
-            panel.addView(text("AI CAMERA • FLOW GLASS", 9f))
-            panel.addView(createAiStatusView())
-            panel.addView(createModeRow())
-            panel.addView(createSmartFrameButton())
-
-            if (mode == "MANUAL") {
-                panel.addView(createSceneChoices())
-            }
-
-            panel.addView(createOpacityControls())
-
-            params.width = dp(280)
+        val main = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
         }
+        main.addView(createOpacityControls())
+        main.addView(createAiStatusView())
+        main.addView(createModeRow())
+        main.addView(
+            createSmartFrameButton(),
+            LinearLayout.LayoutParams(-1, dp(23)).apply { topMargin = dp(3) }
+        )
+        if (mode == "MANUAL") main.addView(createSceneChoices())
 
-        params.height = WindowManager.LayoutParams.WRAP_CONTENT
-
-        container.layoutParams = FrameLayout.LayoutParams(
-            params.width,
-            FrameLayout.LayoutParams.WRAP_CONTENT
+        panel.addView(main, LinearLayout.LayoutParams(0, -2, 3.4f))
+        panel.addView(
+            createSideControls(),
+            LinearLayout.LayoutParams(0, -1, 1f).apply { marginStart = dp(5) }
         )
 
+        params.width = dp(330)
+        params.height = WindowManager.LayoutParams.WRAP_CONTENT
+        container.layoutParams = FrameLayout.LayoutParams(params.width, -2)
         keepWindowOnScreen()
         wm.updateViewLayout(container, params)
     }
