@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.label.ImageLabel
 import com.google.mlkit.vision.label.ImageLabeling
 import com.google.mlkit.vision.label.ImageLabeler
 import com.google.mlkit.vision.label.defaults.ImageLabelerOptions
@@ -75,13 +74,30 @@ class SceneVisionEngine {
             return
         }
 
+        val analysisBitmap = try {
+            bitmap.copy(Bitmap.Config.ARGB_8888, false)
+        } catch (error: Exception) {
+            null
+        }
+
+        if (analysisBitmap == null) {
+            busy.set(false)
+
+            listener.onError(
+                IllegalStateException(
+                    "Không thể tạo bản sao Bitmap"
+                )
+            )
+            return
+        }
+
         lastFrameTime = now
 
         val startTime = SystemClock.elapsedRealtime()
 
         try {
             val image = InputImage.fromBitmap(
-                bitmap,
+                analysisBitmap,
                 normalizeRotation(rotationDegrees)
             )
 
@@ -145,10 +161,12 @@ class SceneVisionEngine {
                     }
                 }
                 .addOnCompleteListener {
+                    recycleSafely(analysisBitmap)
                     busy.set(false)
                 }
 
         } catch (error: Exception) {
+            recycleSafely(analysisBitmap)
             busy.set(false)
 
             Log.e(
@@ -160,6 +178,12 @@ class SceneVisionEngine {
             if (!closed) {
                 listener.onError(error)
             }
+        }
+    }
+
+    private fun recycleSafely(bitmap: Bitmap) {
+        if (!bitmap.isRecycled) {
+            bitmap.recycle()
         }
     }
 
