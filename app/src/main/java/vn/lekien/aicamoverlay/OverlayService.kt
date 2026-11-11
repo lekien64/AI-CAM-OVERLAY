@@ -42,6 +42,11 @@ class OverlayService : Service() {
         const val ACTION_AI_RESULT =
             "vn.lekien.aicamoverlay.ACTION_AI_RESULT"
 
+        const val ACTION_SMART_FRAME_STATE =
+            "vn.lekien.aicamoverlay.ACTION_SMART_FRAME_STATE"
+
+        const val EXTRA_SMART_FRAME_ACTIVE = "smartFrameActive"
+
         const val EXTRA_LABELS = "labels"
         const val EXTRA_CONFIDENCES = "confidences"
         const val EXTRA_BOXES = "boxes"
@@ -74,6 +79,7 @@ class OverlayService : Service() {
     private var cameraWasOpen = false
     private var aiStatus = "AI: Đang chờ Smart Frame"
     private var aiReceiverRegistered = false
+    private var smartFrameActive = false
 
     private var lastUsageQueryTime = 0L
     private var lastKnownForegroundPackage: String? = null
@@ -106,28 +112,13 @@ class OverlayService : Service() {
                 0L
             )
 
-            val width = intent.getIntExtra(
-                EXTRA_IMAGE_WIDTH,
-                0
-            )
+            val width = intent.getIntExtra(EXTRA_IMAGE_WIDTH, 0)
+            val height = intent.getIntExtra(EXTRA_IMAGE_HEIGHT, 0)
 
-            val height = intent.getIntExtra(
-                EXTRA_IMAGE_HEIGHT,
-                0
-            )
+            val frame = intent.getLongExtra(EXTRA_FRAME_NUMBER, 0L)
 
-            val frame = intent.getLongExtra(
-                EXTRA_FRAME_NUMBER,
-                0L
-            )
-
-            val error = intent.getStringExtra(
-                EXTRA_AI_ERROR
-            ).orEmpty()
-
-            val message = intent.getStringExtra(
-                EXTRA_AI_MESSAGE
-            ).orEmpty()
+            val error = intent.getStringExtra(EXTRA_AI_ERROR).orEmpty()
+            val message = intent.getStringExtra(EXTRA_AI_MESSAGE).orEmpty()
 
             if (error.isNotEmpty()) {
                 aiStatus = if (
@@ -185,6 +176,21 @@ class OverlayService : Service() {
         }
     }
 
+    private val smartFrameStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != ACTION_SMART_FRAME_STATE) return
+
+            smartFrameActive = intent.getBooleanExtra(
+                EXTRA_SMART_FRAME_ACTIVE,
+                false
+            )
+
+            if (::panel.isInitialized && container.parent != null) {
+                renderPanel()
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
 
@@ -193,6 +199,7 @@ class OverlayService : Service() {
                 Configuration.ORIENTATION_LANDSCAPE
 
         registerAiReceiver()
+        registerSmartFrameStateReceiver()
 
         orientationListener = object : OrientationEventListener(this) {
             override fun onOrientationChanged(degrees: Int) {
@@ -237,6 +244,21 @@ class OverlayService : Service() {
         }
 
         aiReceiverRegistered = true
+    }
+
+    private fun registerSmartFrameStateReceiver() {
+        val filter = IntentFilter(ACTION_SMART_FRAME_STATE)
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(
+                smartFrameStateReceiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(smartFrameStateReceiver, filter)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -554,6 +576,35 @@ class OverlayService : Service() {
         return row
     }
 
+    private fun createSmartFrameButton(): TextView {
+        val label = if (smartFrameActive) {
+            "SMART FRAME: ĐANG CHẠY"
+        } else {
+            "BẬT SMART FRAME"
+        }
+
+        return actionButton(label, smartFrameActive) {
+            if (smartFrameActive) {
+                aiStatus = "AI: Smart Frame đang chạy"
+                updateAiStatus()
+            } else {
+                try {
+                    val intent = Intent(
+                        this,
+                        SmartFramePermissionActivity::class.java
+                    ).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+
+                    startActivity(intent)
+                } catch (error: Exception) {
+                    aiStatus = "Không mở được cấp quyền: ${error.message}"
+                    updateAiStatus()
+                }
+            }
+        }
+    }
+
     private fun createSceneChoices(): LinearLayout {
         val choices = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -724,6 +775,7 @@ class OverlayService : Service() {
             left.addView(text("AI CAMERA • FLOW GLASS", 8f))
             left.addView(createAiStatusView())
             left.addView(createModeRow())
+            left.addView(createSmartFrameButton())
 
             if (mode == "MANUAL") {
                 left.addView(createSceneChoices())
@@ -749,6 +801,7 @@ class OverlayService : Service() {
             panel.addView(text("AI CAMERA • FLOW GLASS", 9f))
             panel.addView(createAiStatusView())
             panel.addView(createModeRow())
+            panel.addView(createSmartFrameButton())
 
             if (mode == "MANUAL") {
                 panel.addView(createSceneChoices())
@@ -901,6 +954,11 @@ class OverlayService : Service() {
 
         orientationListener?.disable()
         orientationListener = null
+
+        try {
+            unregisterReceiver(smartFrameStateReceiver)
+        } catch (_: Exception) {
+        }
 
         if (aiReceiverRegistered) {
             try {
