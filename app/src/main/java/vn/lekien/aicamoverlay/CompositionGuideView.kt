@@ -8,6 +8,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.view.View
+import com.google.mlkit.vision.pose.PoseLandmark
 import kotlin.math.max
 import kotlin.math.min
 
@@ -28,6 +29,7 @@ class CompositionGuideView(context: Context) : View(context) {
         private const val CONTAINMENT_THRESHOLD = 0.82f
         private const val MAX_VISIBLE_DETECTIONS = 8
         private const val MAX_BOX_AREA = 0.78f
+        private const val MIN_POSE_CONFIDENCE = 0.35f
     }
 
     var scene: String = "PHONG CẢNH"
@@ -49,6 +51,12 @@ class CompositionGuideView(context: Context) : View(context) {
         }
 
     var detections: List<GuideDetection> = emptyList()
+        set(value) {
+            field = value
+            invalidate()
+        }
+
+    var posePoints: List<PoseVisionEngine.PosePoint> = emptyList()
         set(value) {
             field = value
             invalidate()
@@ -94,6 +102,25 @@ class CompositionGuideView(context: Context) : View(context) {
         )
     }
 
+    private val skeletonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(35, 235, 210)
+        style = Paint.Style.STROKE
+        strokeWidth = dp(2.5f)
+        strokeCap = Paint.Cap.ROUND
+        strokeJoin = Paint.Join.ROUND
+    }
+
+    private val skeletonJointPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.FILL
+    }
+
+    private val skeletonJointOutlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(20, 210, 190)
+        style = Paint.Style.STROKE
+        strokeWidth = dp(1.8f)
+    }
+
     private fun dp(value: Float): Float =
         value * resources.displayMetrics.density
 
@@ -107,6 +134,7 @@ class CompositionGuideView(context: Context) : View(context) {
         }
 
         drawDetections(canvas)
+        drawPoseSkeleton(canvas)
     }
 
     private fun drawComposition(canvas: Canvas) {
@@ -305,6 +333,81 @@ class CompositionGuideView(context: Context) : View(context) {
         }
     }
 
+    private fun drawPoseSkeleton(canvas: Canvas) {
+        val validPoints = posePoints
+            .filter {
+                it.confidence >= MIN_POSE_CONFIDENCE &&
+                    it.x in 0f..1f &&
+                    it.y in 0f..1f
+            }
+            .associateBy { it.type }
+
+        if (validPoints.size < 5) return
+
+        fun point(type: Int): Pair<Float, Float>? {
+            val landmark = validPoints[type] ?: return null
+            return Pair(
+                landmark.x * width,
+                landmark.y * height
+            )
+        }
+
+        fun connect(first: Int, second: Int) {
+            val a = point(first) ?: return
+            val b = point(second) ?: return
+
+            canvas.drawLine(
+                a.first,
+                a.second,
+                b.first,
+                b.second,
+                skeletonPaint
+            )
+        }
+
+        val connections = arrayOf(
+            PoseLandmark.LEFT_SHOULDER to PoseLandmark.RIGHT_SHOULDER,
+            PoseLandmark.LEFT_SHOULDER to PoseLandmark.LEFT_ELBOW,
+            PoseLandmark.LEFT_ELBOW to PoseLandmark.LEFT_WRIST,
+            PoseLandmark.RIGHT_SHOULDER to PoseLandmark.RIGHT_ELBOW,
+            PoseLandmark.RIGHT_ELBOW to PoseLandmark.RIGHT_WRIST,
+            PoseLandmark.LEFT_SHOULDER to PoseLandmark.LEFT_HIP,
+            PoseLandmark.RIGHT_SHOULDER to PoseLandmark.RIGHT_HIP,
+            PoseLandmark.LEFT_HIP to PoseLandmark.RIGHT_HIP,
+            PoseLandmark.LEFT_HIP to PoseLandmark.LEFT_KNEE,
+            PoseLandmark.LEFT_KNEE to PoseLandmark.LEFT_ANKLE,
+            PoseLandmark.RIGHT_HIP to PoseLandmark.RIGHT_KNEE,
+            PoseLandmark.RIGHT_KNEE to PoseLandmark.RIGHT_ANKLE,
+            PoseLandmark.LEFT_ANKLE to PoseLandmark.LEFT_HEEL,
+            PoseLandmark.LEFT_HEEL to PoseLandmark.LEFT_FOOT_INDEX,
+            PoseLandmark.RIGHT_ANKLE to PoseLandmark.RIGHT_HEEL,
+            PoseLandmark.RIGHT_HEEL to PoseLandmark.RIGHT_FOOT_INDEX
+        )
+
+        connections.forEach { (first, second) ->
+            connect(first, second)
+        }
+
+        validPoints.values.forEach { landmark ->
+            val x = landmark.x * width
+            val y = landmark.y * height
+
+            canvas.drawCircle(
+                x,
+                y,
+                dp(4f),
+                skeletonJointPaint
+            )
+
+            canvas.drawCircle(
+                x,
+                y,
+                dp(4f),
+                skeletonJointOutlinePaint
+            )
+        }
+    }
+
     private fun filterDetections(): List<GuideDetection> {
         val candidates = detections
             .filter { item ->
@@ -337,7 +440,6 @@ class CompositionGuideView(context: Context) : View(context) {
         for (candidate in candidates) {
             val candidateArea = boxArea(candidate)
 
-            // Bỏ khung gần phủ toàn bộ ảnh.
             if (candidateArea > MAX_BOX_AREA) {
                 continue
             }
@@ -349,12 +451,9 @@ class CompositionGuideView(context: Context) : View(context) {
                 val sameLabel =
                     candidate.label.equals(existing.label, true)
 
-                // Loại khung gần trùng nhau, ưu tiên độ tin cậy cao.
                 val nearDuplicate =
                     sameLabel && iou >= DUPLICATE_IOU
 
-                // Nếu một khung lớn bao gần trọn một khung nhỏ,
-                // ưu tiên khung nhỏ hơn khi nó mô tả vùng cụ thể.
                 val nestedLargeBox =
                     candidateArea > boxArea(existing) &&
                         containment >= CONTAINMENT_THRESHOLD &&
