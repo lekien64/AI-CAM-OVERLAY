@@ -427,17 +427,40 @@ class CompositionGuideView(context: Context) : View(context) {
     private fun drawPoseSkeleton(canvas: Canvas) {
         val validPoints = posePoints
             .filter {
-                it.confidence >= MIN_POSE_CONFIDENCE &&
+                it.confidence >= 0.50f &&
                     it.x in 0f..1f &&
                     it.y in 0f..1f
             }
             .associateBy { it.type }
 
-        if (validPoints.size < 5) return
+        fun has(type: Int): Boolean = validPoints.containsKey(type)
+
+        val faceAnchors = listOf(
+            PoseLandmark.NOSE,
+            PoseLandmark.LEFT_EYE,
+            PoseLandmark.RIGHT_EYE,
+            PoseLandmark.LEFT_EAR,
+            PoseLandmark.RIGHT_EAR
+        )
+
+        val hasFace = faceAnchors.any { has(it) }
+
+        val hasLeftShoulder = has(PoseLandmark.LEFT_SHOULDER)
+        val hasRightShoulder = has(PoseLandmark.RIGHT_SHOULDER)
+        val hasShoulder = hasLeftShoulder || hasRightShoulder
+
+        val hasHip =
+            has(PoseLandmark.LEFT_HIP) ||
+            has(PoseLandmark.RIGHT_HIP)
+
+        val validPerson =
+            (hasFace && hasShoulder) ||
+            (hasLeftShoulder && hasRightShoulder && hasHip)
+
+        if (!validPerson) return
 
         fun point(type: Int): Pair<Float, Float>? {
             val landmark = validPoints[type] ?: return null
-
             return Pair(
                 landmark.x * width,
                 landmark.y * height
@@ -447,6 +470,11 @@ class CompositionGuideView(context: Context) : View(context) {
         fun connect(first: Int, second: Int) {
             val a = point(first) ?: return
             val b = point(second) ?: return
+
+            val dx = (a.first - b.first) / width.toFloat()
+            val dy = (a.second - b.second) / height.toFloat()
+
+            if (dx * dx + dy * dy > 0.42f) return
 
             canvas.drawLine(
                 a.first,
@@ -462,42 +490,84 @@ class CompositionGuideView(context: Context) : View(context) {
             PoseLandmark.LEFT_SHOULDER to PoseLandmark.LEFT_ELBOW,
             PoseLandmark.LEFT_ELBOW to PoseLandmark.LEFT_WRIST,
             PoseLandmark.RIGHT_SHOULDER to PoseLandmark.RIGHT_ELBOW,
-            PoseLandmark.RIGHT_ELBOW to PoseLandmark.RIGHT_WRIST,
-            PoseLandmark.LEFT_SHOULDER to PoseLandmark.LEFT_HIP,
-            PoseLandmark.RIGHT_SHOULDER to PoseLandmark.RIGHT_HIP,
-            PoseLandmark.LEFT_HIP to PoseLandmark.RIGHT_HIP,
-            PoseLandmark.LEFT_HIP to PoseLandmark.LEFT_KNEE,
-            PoseLandmark.LEFT_KNEE to PoseLandmark.LEFT_ANKLE,
-            PoseLandmark.RIGHT_HIP to PoseLandmark.RIGHT_KNEE,
-            PoseLandmark.RIGHT_KNEE to PoseLandmark.RIGHT_ANKLE,
-            PoseLandmark.LEFT_ANKLE to PoseLandmark.LEFT_HEEL,
-            PoseLandmark.LEFT_HEEL to PoseLandmark.LEFT_FOOT_INDEX,
-            PoseLandmark.RIGHT_ANKLE to PoseLandmark.RIGHT_HEEL,
-            PoseLandmark.RIGHT_HEEL to PoseLandmark.RIGHT_FOOT_INDEX
+            PoseLandmark.RIGHT_ELBOW to PoseLandmark.RIGHT_WRIST
         )
 
         connections.forEach { (first, second) ->
             connect(first, second)
         }
 
-        validPoints.values.forEach { landmark ->
-            val x = landmark.x * width
-            val y = landmark.y * height
-
-            canvas.drawCircle(
-                x,
-                y,
-                dp(4f),
-                skeletonJointPaint
+        if (hasLeftShoulder && hasRightShoulder && hasHip) {
+            val bodyConnections = arrayOf(
+                PoseLandmark.LEFT_SHOULDER to PoseLandmark.LEFT_HIP,
+                PoseLandmark.RIGHT_SHOULDER to PoseLandmark.RIGHT_HIP,
+                PoseLandmark.LEFT_HIP to PoseLandmark.RIGHT_HIP,
+                PoseLandmark.LEFT_HIP to PoseLandmark.LEFT_KNEE,
+                PoseLandmark.LEFT_KNEE to PoseLandmark.LEFT_ANKLE,
+                PoseLandmark.RIGHT_HIP to PoseLandmark.RIGHT_KNEE,
+                PoseLandmark.RIGHT_KNEE to PoseLandmark.RIGHT_ANKLE,
+                PoseLandmark.LEFT_ANKLE to PoseLandmark.LEFT_HEEL,
+                PoseLandmark.LEFT_HEEL to PoseLandmark.LEFT_FOOT_INDEX,
+                PoseLandmark.RIGHT_ANKLE to PoseLandmark.RIGHT_HEEL,
+                PoseLandmark.RIGHT_HEEL to PoseLandmark.RIGHT_FOOT_INDEX
             )
 
-            canvas.drawCircle(
-                x,
-                y,
-                dp(4f),
-                skeletonJointOutlinePaint
+            bodyConnections.forEach { (first, second) ->
+                connect(first, second)
+            }
+        }
+
+        val allowedPoints = mutableSetOf(
+            PoseLandmark.NOSE,
+            PoseLandmark.LEFT_EYE,
+            PoseLandmark.RIGHT_EYE,
+            PoseLandmark.LEFT_EAR,
+            PoseLandmark.RIGHT_EAR,
+            PoseLandmark.LEFT_SHOULDER,
+            PoseLandmark.RIGHT_SHOULDER,
+            PoseLandmark.LEFT_ELBOW,
+            PoseLandmark.RIGHT_ELBOW,
+            PoseLandmark.LEFT_WRIST,
+            PoseLandmark.RIGHT_WRIST
+        )
+
+        if (hasLeftShoulder && hasRightShoulder && hasHip) {
+            allowedPoints.addAll(
+                listOf(
+                    PoseLandmark.LEFT_HIP,
+                    PoseLandmark.RIGHT_HIP,
+                    PoseLandmark.LEFT_KNEE,
+                    PoseLandmark.RIGHT_KNEE,
+                    PoseLandmark.LEFT_ANKLE,
+                    PoseLandmark.RIGHT_ANKLE,
+                    PoseLandmark.LEFT_HEEL,
+                    PoseLandmark.RIGHT_HEEL,
+                    PoseLandmark.LEFT_FOOT_INDEX,
+                    PoseLandmark.RIGHT_FOOT_INDEX
+                )
             )
         }
+
+        validPoints.values
+            .filter { it.type in allowedPoints }
+            .forEach { landmark ->
+                val x = landmark.x * width
+                val y = landmark.y * height
+
+                canvas.drawCircle(
+                    x,
+                    y,
+                    dp(4f),
+                    skeletonJointPaint
+                )
+
+                canvas.drawCircle(
+                    x,
+                    y,
+                    dp(4f),
+                    skeletonJointOutlinePaint
+                )
+            }
     }
 
     private fun filterDetections(): List<GuideDetection> {
