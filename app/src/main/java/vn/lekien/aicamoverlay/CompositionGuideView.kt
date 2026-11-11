@@ -1,12 +1,16 @@
 
 package vn.lekien.aicamoverlay
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.os.Build
 import android.view.View
 import com.google.mlkit.vision.pose.PoseLandmark
 import kotlin.math.max
@@ -30,6 +34,14 @@ class CompositionGuideView(context: Context) : View(context) {
         private const val MAX_VISIBLE_DETECTIONS = 8
         private const val MAX_BOX_AREA = 0.78f
         private const val MIN_POSE_CONFIDENCE = 0.35f
+
+        private const val ACTION_POSE_RESULT =
+            "vn.lekien.aicamoverlay.ACTION_POSE_RESULT"
+
+        private const val EXTRA_POSE_TYPES = "poseTypes"
+        private const val EXTRA_POSE_X = "poseX"
+        private const val EXTRA_POSE_Y = "poseY"
+        private const val EXTRA_POSE_CONFIDENCES = "poseConfidences"
     }
 
     var scene: String = "PHONG CẢNH"
@@ -61,6 +73,49 @@ class CompositionGuideView(context: Context) : View(context) {
             field = value
             invalidate()
         }
+
+    private var poseReceiverRegistered = false
+
+    private val poseReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != ACTION_POSE_RESULT) return
+
+            val types = intent.getIntArrayExtra(EXTRA_POSE_TYPES)
+                ?: return
+
+            val xs = intent.getFloatArrayExtra(EXTRA_POSE_X)
+                ?: return
+
+            val ys = intent.getFloatArrayExtra(EXTRA_POSE_Y)
+                ?: return
+
+            val confidences =
+                intent.getFloatArrayExtra(EXTRA_POSE_CONFIDENCES)
+                    ?: return
+
+            val count = minOf(
+                types.size,
+                xs.size,
+                ys.size,
+                confidences.size
+            )
+
+            val points = ArrayList<PoseVisionEngine.PosePoint>(count)
+
+            for (i in 0 until count) {
+                points.add(
+                    PoseVisionEngine.PosePoint(
+                        type = types[i],
+                        x = xs[i],
+                        y = ys[i],
+                        confidence = confidences[i]
+                    )
+                )
+            }
+
+            posePoints = points
+        }
+    }
 
     private val framePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.argb(190, 255, 255, 255)
@@ -123,6 +178,42 @@ class CompositionGuideView(context: Context) : View(context) {
 
     private fun dp(value: Float): Float =
         value * resources.displayMetrics.density
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+
+        if (poseReceiverRegistered) return
+
+        val filter = IntentFilter(ACTION_POSE_RESULT)
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            context.registerReceiver(
+                poseReceiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.registerReceiver(poseReceiver, filter)
+        }
+
+        poseReceiverRegistered = true
+    }
+
+    override fun onDetachedFromWindow() {
+        if (poseReceiverRegistered) {
+            try {
+                context.unregisterReceiver(poseReceiver)
+            } catch (_: Exception) {
+            }
+
+            poseReceiverRegistered = false
+        }
+
+        posePoints = emptyList()
+
+        super.onDetachedFromWindow()
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -346,6 +437,7 @@ class CompositionGuideView(context: Context) : View(context) {
 
         fun point(type: Int): Pair<Float, Float>? {
             val landmark = validPoints[type] ?: return null
+
             return Pair(
                 landmark.x * width,
                 landmark.y * height
