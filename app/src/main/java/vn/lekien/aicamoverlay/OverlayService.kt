@@ -28,6 +28,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
+import com.google.mlkit.vision.pose.PoseLandmark
 import kotlin.math.abs
 
 class OverlayService : Service() {
@@ -454,7 +455,35 @@ class OverlayService : Service() {
         guideView.isLandscape = landscape
         guideView.showCompositionGuides = mode == "MANUAL"
 
-        val hasDetectedPerson = guideView.posePoints.size >= 5
+        val confidentPoseTypes = guideView.posePoints
+            .filter {
+                it.confidence >= 0.50f &&
+                    it.x in 0f..1f &&
+                    it.y in 0f..1f
+            }
+            .map { it.type }
+            .toSet()
+
+        val hasFaceAnchor =
+            confidentPoseTypes.contains(PoseLandmark.NOSE) ||
+                confidentPoseTypes.contains(PoseLandmark.LEFT_EYE) ||
+                confidentPoseTypes.contains(PoseLandmark.RIGHT_EYE) ||
+                confidentPoseTypes.contains(PoseLandmark.LEFT_EAR) ||
+                confidentPoseTypes.contains(PoseLandmark.RIGHT_EAR)
+
+        val hasLeftShoulder =
+            confidentPoseTypes.contains(PoseLandmark.LEFT_SHOULDER)
+
+        val hasRightShoulder =
+            confidentPoseTypes.contains(PoseLandmark.RIGHT_SHOULDER)
+
+        val hasHip =
+            confidentPoseTypes.contains(PoseLandmark.LEFT_HIP) ||
+                confidentPoseTypes.contains(PoseLandmark.RIGHT_HIP)
+
+        val hasDetectedPerson =
+            (hasFaceAnchor && (hasLeftShoulder || hasRightShoulder)) ||
+                (hasLeftShoulder && hasRightShoulder && hasHip)
 
         val shouldShow =
             cameraWasOpen &&
