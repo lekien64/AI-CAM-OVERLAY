@@ -35,6 +35,18 @@ class ScreenCaptureService : Service() {
         private const val EXTRA_FRAME_NUMBER = "frameNumber"
         private const val EXTRA_AI_ERROR = "aiError"
         private const val EXTRA_AI_MESSAGE = "aiMessage"
+
+        private const val ACTION_POSE_RESULT =
+            "vn.lekien.aicamoverlay.ACTION_POSE_RESULT"
+
+        private const val EXTRA_POSE_TYPES = "poseTypes"
+        private const val EXTRA_POSE_X = "poseX"
+        private const val EXTRA_POSE_Y = "poseY"
+        private const val EXTRA_POSE_CONFIDENCES = "poseConfidences"
+        private const val EXTRA_POSE_TIME = "poseTime"
+        private const val EXTRA_POSE_DETECTED = "poseDetected"
+        private const val EXTRA_POSE_WIDTH = "poseWidth"
+        private const val EXTRA_POSE_HEIGHT = "poseHeight"
     }
 
     private data class BitmapStats(
@@ -50,6 +62,7 @@ class ScreenCaptureService : Service() {
     private var captureHandler: Handler? = null
 
     private var aiVisionEngine: AiVisionEngine? = null
+    private var poseVisionEngine: PoseVisionEngine? = null
 
     private var firstFrameLogged = false
     private var capturedFrameCount = 0L
@@ -123,6 +136,66 @@ class ScreenCaptureService : Service() {
                 Log.e(TAG, "AI Vision phân tích thất bại", error)
 
                 sendAiError(message)
+            }
+        }
+
+    private val poseListener =
+        object : PoseVisionEngine.Listener {
+
+            override fun onResult(
+                result: PoseVisionEngine.PoseResult
+            ) {
+                val types = IntArray(result.points.size)
+                val xs = FloatArray(result.points.size)
+                val ys = FloatArray(result.points.size)
+                val confidences = FloatArray(result.points.size)
+
+                result.points.forEachIndexed { index, point ->
+                    types[index] = point.type
+                    xs[index] = point.x
+                    ys[index] = point.y
+                    confidences[index] = point.confidence
+                }
+
+                Log.d(
+                    TAG,
+                    "POSE BROADCAST | " +
+                        "points=${result.points.size} | " +
+                        "person=${result.personDetected} | " +
+                        "time=${result.analysisTimeMs}ms"
+                )
+
+                val intent = Intent(ACTION_POSE_RESULT).apply {
+                    setPackage(packageName)
+
+                    putExtra(EXTRA_POSE_TYPES, types)
+                    putExtra(EXTRA_POSE_X, xs)
+                    putExtra(EXTRA_POSE_Y, ys)
+                    putExtra(EXTRA_POSE_CONFIDENCES, confidences)
+
+                    putExtra(
+                        EXTRA_POSE_TIME,
+                        result.analysisTimeMs
+                    )
+
+                    putExtra(
+                        EXTRA_POSE_DETECTED,
+                        result.personDetected
+                    )
+
+                    putExtra(EXTRA_POSE_WIDTH, result.imageWidth)
+                    putExtra(EXTRA_POSE_HEIGHT, result.imageHeight)
+                }
+
+                sendBroadcast(intent)
+            }
+
+            override fun onError(error: Exception) {
+                Log.e(
+                    TAG,
+                    "Pose Detection phân tích thất bại",
+                    error
+                )
             }
         }
 
@@ -253,6 +326,7 @@ class ScreenCaptureService : Service() {
         captureHandler = Handler(captureThread!!.looper)
 
         aiVisionEngine = AiVisionEngine()
+        poseVisionEngine = PoseVisionEngine()
 
         projection.registerCallback(
             projectionCallback,
@@ -296,6 +370,7 @@ class ScreenCaptureService : Service() {
         )
 
         Log.d(TAG, "AI Vision Engine đã kết nối")
+        Log.d(TAG, "Pose Vision Engine đã kết nối")
 
         sendAiError("Đang chờ khung hình đầu tiên")
     }
@@ -419,6 +494,14 @@ class ScreenCaptureService : Service() {
                 "BITMAP CHECK | " +
                     "luma=${latestBitmapStats.averageLuma}/255 | " +
                     "visible=${latestBitmapStats.visibleRatio}%"
+            )
+
+            // PoseVisionEngine sao chép bitmap đồng bộ bên trong analyze().
+            // Vì vậy có thể gọi trước AI Object Detection, vốn quản lý bitmap gốc.
+            poseVisionEngine?.analyze(
+                sourceBitmap = bitmap,
+                rotationDegrees = 0,
+                listener = poseListener
             )
 
             aiVisionEngine?.analyze(
@@ -545,6 +628,9 @@ class ScreenCaptureService : Service() {
             imageReader?.close()
             imageReader = null
 
+            poseVisionEngine?.close()
+            poseVisionEngine = null
+
             aiVisionEngine?.close()
             aiVisionEngine = null
 
@@ -563,7 +649,7 @@ class ScreenCaptureService : Service() {
             Log.e(TAG, "Lỗi khi giải phóng tài nguyên", e)
         }
 
-        Log.d(TAG, "Smart Frame và AI Vision đã tắt")
+        Log.d(TAG, "Smart Frame, AI Vision và Pose Vision đã tắt")
 
         super.onDestroy()
     }
