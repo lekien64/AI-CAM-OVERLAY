@@ -24,8 +24,10 @@ class CompositionGuideView(context: Context) : View(context) {
 
     companion object {
         private const val MIN_CONFIDENCE = 0.30f
-        private const val DUPLICATE_IOU = 0.82f
-        private const val MAX_VISIBLE_DETECTIONS = 12
+        private const val DUPLICATE_IOU = 0.55f
+        private const val CONTAINMENT_THRESHOLD = 0.82f
+        private const val MAX_VISIBLE_DETECTIONS = 8
+        private const val MAX_BOX_AREA = 0.78f
     }
 
     var scene: String = "PHONG CẢNH"
@@ -333,11 +335,35 @@ class CompositionGuideView(context: Context) : View(context) {
         val accepted = mutableListOf<GuideDetection>()
 
         for (candidate in candidates) {
-            val overlapsExisting = accepted.any { existing ->
-                intersectionOverUnion(candidate, existing) >= DUPLICATE_IOU
+            val candidateArea = boxArea(candidate)
+
+            // Bỏ khung gần phủ toàn bộ ảnh.
+            if (candidateArea > MAX_BOX_AREA) {
+                continue
             }
 
-            if (!overlapsExisting) {
+            val redundant = accepted.any { existing ->
+                val iou = intersectionOverUnion(candidate, existing)
+                val containment = containmentRatio(candidate, existing)
+
+                val sameLabel =
+                    candidate.label.equals(existing.label, true)
+
+                // Loại khung gần trùng nhau, ưu tiên độ tin cậy cao.
+                val nearDuplicate =
+                    sameLabel && iou >= DUPLICATE_IOU
+
+                // Nếu một khung lớn bao gần trọn một khung nhỏ,
+                // ưu tiên khung nhỏ hơn khi nó mô tả vùng cụ thể.
+                val nestedLargeBox =
+                    candidateArea > boxArea(existing) &&
+                        containment >= CONTAINMENT_THRESHOLD &&
+                        boxArea(existing) / candidateArea <= 0.55f
+
+                nearDuplicate || nestedLargeBox
+            }
+
+            if (!redundant) {
                 accepted.add(candidate)
             }
 
@@ -347,6 +373,11 @@ class CompositionGuideView(context: Context) : View(context) {
         }
 
         return accepted
+    }
+
+    private fun boxArea(item: GuideDetection): Float {
+        return max(0f, item.right - item.left) *
+            max(0f, item.bottom - item.top)
     }
 
     private fun intersectionOverUnion(
@@ -362,15 +393,30 @@ class CompositionGuideView(context: Context) : View(context) {
         val intersectionHeight = max(0f, bottom - top)
         val intersection = intersectionWidth * intersectionHeight
 
-        val firstArea =
-            (first.right - first.left) * (first.bottom - first.top)
-
-        val secondArea =
-            (second.right - second.left) * (second.bottom - second.top)
-
-        val union = firstArea + secondArea - intersection
+        val union = boxArea(first) + boxArea(second) - intersection
 
         return if (union > 0f) intersection / union else 0f
+    }
+
+    private fun containmentRatio(
+        first: GuideDetection,
+        second: GuideDetection
+    ): Float {
+        val left = max(first.left, second.left)
+        val top = max(first.top, second.top)
+        val right = min(first.right, second.right)
+        val bottom = min(first.bottom, second.bottom)
+
+        val intersection =
+            max(0f, right - left) * max(0f, bottom - top)
+
+        val smallerArea = min(boxArea(first), boxArea(second))
+
+        return if (smallerArea > 0f) {
+            intersection / smallerArea
+        } else {
+            0f
+        }
     }
 
     private fun drawDetections(canvas: Canvas) {
