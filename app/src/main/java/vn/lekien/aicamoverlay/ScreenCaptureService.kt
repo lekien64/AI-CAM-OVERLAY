@@ -721,9 +721,19 @@ class ScreenCaptureService : Service() {
             Log.e(TAG, "Lỗi khi giải phóng tài nguyên", e)
         }
 
-        Log.d(
+                Log.d(
             TAG,
             "Smart Frame, AI Vision, Pose Vision và Face Vision đã tắt"
+        )
+
+        sendBroadcast(
+            Intent(OverlayService.ACTION_SMART_FRAME_STATE).apply {
+                setPackage(packageName)
+                putExtra(
+                    OverlayService.EXTRA_SMART_FRAME_ACTIVE,
+                    false
+                )
+            }
         )
 
         super.onDestroy()
