@@ -39,6 +39,9 @@ dependencies {
     // Nhận diện 33 điểm khớp cơ thể, chạy offline
     implementation("com.google.mlkit:pose-detection:18.0.0-beta5")
 
-    // Nhận diện khuôn mặt, mô hình đóng gói sẵn, chạy offline
+    // Nhận diện khuôn mặt, mô hình đóng gói sẵn
     implementation("com.google.mlkit:face-detection:16.1.7")
+
+    // Phân loại hình ảnh, mô hình đóng gói sẵn, chạy offline
+    implementation("com.google.mlkit:image-labeling:17.0.9")
 }
