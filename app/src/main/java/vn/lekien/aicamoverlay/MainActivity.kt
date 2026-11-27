@@ -142,7 +142,7 @@ class MainActivity : Activity() {
         }
 
         val title = TextView(this).apply {
-            text = "✦  AI CAM OVERLAY"
+            text = "✦  TRỢ LÝ CHỤP ẢNH"
             textSize = 25f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
@@ -150,7 +150,7 @@ class MainActivity : Activity() {
         }
 
         val subtitle = TextView(this).apply {
-            text = "SMART FRAME • FLOW GLASS"
+            text = "CAMERA GỐC  •  AI TRÊN MÁY  •  KHÔNG LƯU KHUNG HÌNH"
             textSize = 11f
             setTextColor(Color.rgb(190, 198, 212))
             gravity = Gravity.CENTER

@@ -75,6 +75,9 @@ class OverlayService : Service() {
     private var landscape = false
     private var mode = "AUTO"
     private var selectedScene = "PHONG CẢNH"
+    private var selectedIntent: String? = null
+    private var analysisPaused = true
+    private var guidanceEnabled = false
     private var glassAlpha = 204
     private var cameraWasOpen = false
     private var aiStatus = "AI: Đang chờ Smart Frame"
@@ -356,6 +359,19 @@ class OverlayService : Service() {
         }
     }
 
+    private fun setAnalysisPaused(paused: Boolean) {
+        analysisPaused = paused
+        startService(Intent(this, ScreenCaptureService::class.java).apply {
+            action = ScreenCaptureService.ACTION_SET_ANALYSIS_PAUSED
+            putExtra(ScreenCaptureService.EXTRA_ANALYSIS_PAUSED, paused)
+        })
+        if (paused && ::guideView.isInitialized) {
+            guideView.detections = emptyList()
+            guideView.posePoints = emptyList()
+            updateGuide()
+        }
+    }
+
     private fun glassBackground() =
         GradientDrawable(
             GradientDrawable.Orientation.TL_BR,
@@ -460,6 +476,10 @@ class OverlayService : Service() {
             gravity = Gravity.TOP or Gravity.START
             x = dp(12)
             y = dp(35)
+            if (Build.VERSION.SDK_INT >= 31) {
+                flags = flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
+                setBlurBehindRadius(dp(24))
+            }
         }
 
         wm.addView(container, params)
@@ -503,7 +523,7 @@ class OverlayService : Service() {
                 (hasLeftShoulder && hasRightShoulder && hasHip)
 
         val shouldShow =
-            cameraWasOpen &&
+            cameraWasOpen && guidanceEnabled && !analysisPaused &&
                 (
                     mode == "MANUAL" ||
                     guideView.detections.isNotEmpty() ||
@@ -573,11 +593,7 @@ class OverlayService : Service() {
             text("CHỌN KIỂU CHỤP", 10f, Color.LTGRAY)
         )
 
-        listOf(
-            "PHONG CẢNH",
-            "CHÂN DUNG",
-            "TẠO DÁNG"
-        ).forEach { scene ->
+        listOf("PHONG CẢNH", "NGƯỜI").forEach { scene ->
 
             val selected = selectedScene == scene
 
@@ -600,6 +616,9 @@ class OverlayService : Service() {
 
                 setOnClickListener {
                     selectedScene = scene
+                    selectedIntent = null
+                    guidanceEnabled = true
+                    setAnalysisPaused(false)
                     renderPanel()
                     updateGuide()
                 }
@@ -617,6 +636,61 @@ class OverlayService : Service() {
         }
 
         return choices
+    }
+
+    private fun createIntentChoices(): LinearLayout {
+        val block = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(5), 0, 0)
+        }
+        val question = if (selectedScene == "PHONG CẢNH") {
+            "Bạn muốn lấy thêm gì?"
+        } else {
+            "Bạn muốn chụp kiểu nào?"
+        }
+        block.addView(text(question, 13f, Color.WHITE).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setPadding(dp(5), dp(4), dp(5), dp(6))
+        })
+        val options = if (selectedScene == "PHONG CẢNH") {
+            listOf("Bầu trời", "Mặt đất")
+        } else {
+            listOf("Toàn thân", "Cận cảnh")
+        }
+        options.forEach { option ->
+            block.addView(actionButton(option, selectedIntent == option, 12f) {
+                selectedIntent = option
+                renderPanel()
+                updateGuide()
+            }, LinearLayout.LayoutParams(-1, dp(38)).apply {
+                topMargin = dp(4)
+            })
+        }
+        selectedIntent?.let { choice ->
+            val tip = when (selectedScene) {
+                "PHONG CẢNH" -> if (choice == "Bầu trời") {
+                    "Ngẩng máy để lấy thêm bầu trời."
+                } else {
+                    "Hạ máy để lấy thêm tiền cảnh."
+                }
+                else -> if (choice == "Toàn thân") {
+                    "Lùi lại để lấy trọn người."
+                } else {
+                    "Tiến gần để chụp cận cảnh."
+                }
+            }
+            block.addView(text(tip, 13f, Color.rgb(210, 245, 224)).apply {
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                setPadding(dp(8), dp(8), dp(8), dp(7))
+            })
+            block.addView(actionButton("Ẩn gợi ý", false, 10f) {
+                selectedIntent = null
+                renderPanel()
+            }, LinearLayout.LayoutParams(-1, dp(32)).apply {
+                topMargin = dp(2)
+            })
+        }
+        return block
     }
 
     private fun createAiStatusView(): TextView {
@@ -706,30 +780,46 @@ class OverlayService : Service() {
             return
         }
 
-        panel.orientation = LinearLayout.HORIZONTAL
+        panel.orientation = LinearLayout.VERTICAL
         panel.background = glassBackground()
-        panel.setPadding(dp(7), dp(5), dp(7), dp(5))
+        panel.setPadding(dp(12), dp(10), dp(12), dp(10))
 
-        val main = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        main.addView(createOpacityControls())
-        main.addView(createAiStatusView())
-        main.addView(createModeRow())
-        main.addView(
-            createSmartFrameButton(),
-            LinearLayout.LayoutParams(-1, dp(23)).apply { topMargin = dp(3) }
-        )
-        if (mode == "MANUAL") main.addView(createSceneChoices())
+        val dragTitle = text("✦  TRỢ LÝ CHỤP ẢNH", 13f).apply {
+            gravity = Gravity.START or Gravity.CENTER_VERTICAL
+            setTypeface(null, Typeface.BOLD)
+        }
+        header.addView(dragTitle, LinearLayout.LayoutParams(0, dp(38), 1f))
+        attachDrag(dragTitle)
+        header.addView(actionButton(if (analysisPaused) "Tiếp tục" else "Tạm dừng", analysisPaused, 10f) {
+            setAnalysisPaused(!analysisPaused)
+            aiStatus = if (analysisPaused) "Đã tạm dừng phân tích" else "Đang phân tích trên điện thoại"
+            renderPanel()
+        }, LinearLayout.LayoutParams(-2, dp(34)).apply { marginStart = dp(4) })
+        header.addView(actionButton("⌄", false, 16f) {
+            expanded = false
+            renderPanel()
+        }, LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginStart = dp(4) })
+        header.addView(actionButton("×", false, 17f) {
+            stopAllServices()
+        }, LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginStart = dp(4) })
 
-        panel.addView(main, LinearLayout.LayoutParams(0, -2, 3.4f))
-        panel.addView(
-            createSideControls(),
-            LinearLayout.LayoutParams(0, -1, 1f).apply { marginStart = dp(5) }
-        )
+        panel.addView(header)
+        panel.addView(text("Chọn kiểu chụp", 11f, Color.LTGRAY).apply {
+            gravity = Gravity.START
+            setPadding(dp(5), dp(5), dp(5), dp(3))
+        })
+        panel.addView(createSceneChoices())
+        panel.addView(createIntentChoices())
+        panel.addView(text(if (cameraWasOpen) "Đọc màn hình đang bật" else "Mở ứng dụng camera để bắt đầu", 10f, Color.LTGRAY).apply {
+            gravity = Gravity.START
+            setPadding(dp(6), dp(7), dp(6), 0)
+        })
 
-        params.width = dp(330)
+        params.width = dp(284)
         params.height = WindowManager.LayoutParams.WRAP_CONTENT
         container.layoutParams = FrameLayout.LayoutParams(params.width, -2)
         keepWindowOnScreen()

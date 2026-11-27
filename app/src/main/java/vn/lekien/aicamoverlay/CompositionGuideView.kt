@@ -252,7 +252,7 @@ class CompositionGuideView(context: Context) : View(context) {
 
         when (scene) {
             "PHONG CẢNH" -> drawLandscape(canvas, area)
-            "CHÂN DUNG" -> drawPortrait(canvas, area)
+            "CHÂN DUNG", "NGƯỜI" -> drawPortrait(canvas, area)
             "TẠO DÁNG" -> drawPose(canvas, area)
         }
 

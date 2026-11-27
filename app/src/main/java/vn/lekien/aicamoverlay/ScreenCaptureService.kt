@@ -29,6 +29,8 @@ class ScreenCaptureService : Service() {
         private const val TAG = "AICAM_ScreenCapture"
         private const val CHANNEL_ID = "ai_cam_screen_capture"
         private const val NOTIFICATION_ID = 4102
+        const val ACTION_SET_ANALYSIS_PAUSED = "vn.lekien.aicamoverlay.SET_ANALYSIS_PAUSED"
+        const val EXTRA_ANALYSIS_PAUSED = "analysisPaused"
 
         private const val EXTRA_IMAGE_WIDTH = "imageWidth"
         private const val EXTRA_IMAGE_HEIGHT = "imageHeight"
@@ -76,6 +78,7 @@ class ScreenCaptureService : Service() {
     private var firstFrameLogged = false
     private var capturedFrameCount = 0L
     private var analyzedFrameCount = 0L
+    @Volatile private var analysisPaused = true
 
     private val projectionCallback =
         object : MediaProjection.Callback() {
@@ -302,6 +305,11 @@ class ScreenCaptureService : Service() {
         flags: Int,
         startId: Int
     ): Int {
+
+        if (intent?.action == ACTION_SET_ANALYSIS_PAUSED) {
+            analysisPaused = intent.getBooleanExtra(EXTRA_ANALYSIS_PAUSED, false)
+            return START_NOT_STICKY
+        }
 
         if (mediaProjection != null) {
             return START_NOT_STICKY
@@ -560,6 +568,7 @@ class ScreenCaptureService : Service() {
 
         try {
             capturedFrameCount++
+            if (analysisPaused) return
 
             if (!firstFrameLogged) {
                 Log.d(
