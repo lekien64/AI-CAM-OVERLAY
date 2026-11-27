@@ -44,6 +44,9 @@ class OverlayService : Service() {
 
         const val ACTION_SMART_FRAME_STATE =
             "vn.lekien.aicamoverlay.ACTION_SMART_FRAME_STATE"
+        const val ACTION_THERMAL_STATE =
+            "vn.lekien.aicamoverlay.ACTION_THERMAL_STATE"
+        const val EXTRA_THERMAL_PAUSED = "thermalPaused"
 
         const val EXTRA_SMART_FRAME_ACTIVE = "smartFrameActive"
 
@@ -78,6 +81,7 @@ class OverlayService : Service() {
     private var selectedIntent: String? = null
     private var analysisPaused = true
     private var guidanceEnabled = false
+    private var thermalPaused = false
     private var glassAlpha = 204
     private var cameraWasOpen = false
     private var aiStatus = "AI: Đang chờ Smart Frame"
@@ -194,6 +198,21 @@ class OverlayService : Service() {
         }
     }
 
+    private val thermalStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != ACTION_THERMAL_STATE) return
+            thermalPaused = intent.getBooleanExtra(EXTRA_THERMAL_PAUSED, false)
+            if (thermalPaused && ::guideView.isInitialized) {
+                guideView.detections = emptyList()
+                guideView.posePoints = emptyList()
+                updateGuide()
+            }
+            if (::panel.isInitialized && container.parent != null && expanded) {
+                renderPanel()
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
 
@@ -203,6 +222,7 @@ class OverlayService : Service() {
 
         registerAiReceiver()
         registerSmartFrameStateReceiver()
+        registerThermalStateReceiver()
 
         orientationListener = object : OrientationEventListener(this) {
             override fun onOrientationChanged(degrees: Int) {
@@ -255,6 +275,20 @@ class OverlayService : Service() {
         } else {
             @Suppress("DEPRECATION")
             registerReceiver(smartFrameStateReceiver, filter)
+        }
+    }
+
+    private fun registerThermalStateReceiver() {
+        val filter = IntentFilter(ACTION_THERMAL_STATE)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(
+                thermalStateReceiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(thermalStateReceiver, filter)
         }
     }
 
@@ -364,6 +398,14 @@ class OverlayService : Service() {
         startService(Intent(this, ScreenCaptureService::class.java).apply {
             action = ScreenCaptureService.ACTION_SET_ANALYSIS_PAUSED
             putExtra(ScreenCaptureService.EXTRA_ANALYSIS_PAUSED, paused)
+            putExtra(
+                ScreenCaptureService.EXTRA_ANALYSIS_MODE,
+                if (selectedScene == "NGƯỜI") {
+                    ScreenCaptureService.MODE_PEOPLE
+                } else {
+                    ScreenCaptureService.MODE_LANDSCAPE
+                }
+            )
         })
         if (paused && ::guideView.isInitialized) {
             guideView.detections = emptyList()
@@ -444,6 +486,9 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
+            // Android 12+ blocks touch-through for non-touchable app overlays
+            // whose obscuring opacity exceeds 0.8.
+            alpha = 0.75f
         }
 
         wm.addView(guideView, guideParams)
@@ -476,10 +521,6 @@ class OverlayService : Service() {
             gravity = Gravity.TOP or Gravity.START
             x = dp(12)
             y = dp(35)
-            if (Build.VERSION.SDK_INT >= 31) {
-                flags = flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
-                setBlurBehindRadius(dp(24))
-            }
         }
 
         wm.addView(container, params)
@@ -523,7 +564,7 @@ class OverlayService : Service() {
                 (hasLeftShoulder && hasRightShoulder && hasHip)
 
         val shouldShow =
-            cameraWasOpen && guidanceEnabled && !analysisPaused &&
+            cameraWasOpen && guidanceEnabled && !analysisPaused && !thermalPaused &&
                 (
                     mode == "MANUAL" ||
                     guideView.detections.isNotEmpty() ||
@@ -618,6 +659,10 @@ class OverlayService : Service() {
                     selectedScene = scene
                     selectedIntent = null
                     guidanceEnabled = true
+                    if (::guideView.isInitialized) {
+                        guideView.detections = emptyList()
+                        guideView.posePoints = emptyList()
+                    }
                     setAnalysisPaused(false)
                     renderPanel()
                     updateGuide()
@@ -814,7 +859,12 @@ class OverlayService : Service() {
         })
         panel.addView(createSceneChoices())
         panel.addView(createIntentChoices())
-        panel.addView(text(if (cameraWasOpen) "Đọc màn hình đang bật" else "Mở ứng dụng camera để bắt đầu", 10f, Color.LTGRAY).apply {
+        val footer = when {
+            thermalPaused -> "Máy nóng · AI đang tạm dừng"
+            cameraWasOpen -> "Đọc màn hình đang bật"
+            else -> "Mở ứng dụng camera để bắt đầu"
+        }
+        panel.addView(text(footer, 10f, Color.LTGRAY).apply {
             gravity = Gravity.START
             setPadding(dp(6), dp(7), dp(6), 0)
         })
@@ -960,6 +1010,11 @@ class OverlayService : Service() {
 
         try {
             unregisterReceiver(smartFrameStateReceiver)
+        } catch (_: Exception) {
+        }
+
+        try {
+            unregisterReceiver(thermalStateReceiver)
         } catch (_: Exception) {
         }
 

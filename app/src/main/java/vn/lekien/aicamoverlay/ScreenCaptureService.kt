@@ -21,7 +21,10 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
+import kotlin.math.min
 
 class ScreenCaptureService : Service() {
 
@@ -31,6 +34,10 @@ class ScreenCaptureService : Service() {
         private const val NOTIFICATION_ID = 4102
         const val ACTION_SET_ANALYSIS_PAUSED = "vn.lekien.aicamoverlay.SET_ANALYSIS_PAUSED"
         const val EXTRA_ANALYSIS_PAUSED = "analysisPaused"
+        const val EXTRA_ANALYSIS_MODE = "analysisMode"
+        const val MODE_LANDSCAPE = "LANDSCAPE"
+        const val MODE_PEOPLE = "PEOPLE"
+        private const val MAX_CAPTURE_LONG_EDGE = 1600
 
         private const val EXTRA_IMAGE_WIDTH = "imageWidth"
         private const val EXTRA_IMAGE_HEIGHT = "imageHeight"
@@ -79,6 +86,31 @@ class ScreenCaptureService : Service() {
     private var capturedFrameCount = 0L
     private var analyzedFrameCount = 0L
     @Volatile private var analysisPaused = true
+    @Volatile private var analysisMode = MODE_LANDSCAPE
+    @Volatile private var thermalStatus = PowerManager.THERMAL_STATUS_NONE
+    private var lastAnalysisFrameTime = 0L
+    private var analysisTurn = 0L
+    private var thermalListenerRegistered = false
+    private var thermalPauseActive = false
+
+    private val thermalStatusListener =
+        PowerManager.OnThermalStatusChangedListener { status ->
+            thermalStatus = status
+            val shouldPause = status >= PowerManager.THERMAL_STATUS_SEVERE
+            if (shouldPause != thermalPauseActive) {
+                thermalPauseActive = shouldPause
+                sendBroadcast(
+                    Intent(OverlayService.ACTION_THERMAL_STATE).apply {
+                        setPackage(packageName)
+                        putExtra(
+                            OverlayService.EXTRA_THERMAL_PAUSED,
+                            shouldPause
+                        )
+                    }
+                )
+            }
+            Log.i(TAG, "Thermal status=$status")
+        }
 
     private val projectionCallback =
         object : MediaProjection.Callback() {
@@ -298,6 +330,25 @@ class ScreenCaptureService : Service() {
     @Volatile
     private var latestBitmapStats = BitmapStats(0, 0)
 
+    override fun onCreate() {
+        super.onCreate()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val powerManager = getSystemService(PowerManager::class.java)
+            try {
+                thermalStatus = powerManager.currentThermalStatus
+                thermalPauseActive =
+                    thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
+                powerManager.addThermalStatusListener(
+                    mainExecutor,
+                    thermalStatusListener
+                )
+                thermalListenerRegistered = true
+            } catch (error: Exception) {
+                Log.w(TAG, "Không theo dõi được trạng thái nhiệt", error)
+            }
+        }
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(
@@ -308,6 +359,14 @@ class ScreenCaptureService : Service() {
 
         if (intent?.action == ACTION_SET_ANALYSIS_PAUSED) {
             analysisPaused = intent.getBooleanExtra(EXTRA_ANALYSIS_PAUSED, false)
+            val requestedMode = intent.getStringExtra(EXTRA_ANALYSIS_MODE)
+                ?.takeIf { it == MODE_LANDSCAPE || it == MODE_PEOPLE }
+                ?: analysisMode
+            if (requestedMode != analysisMode) {
+                analysisMode = requestedMode
+                analysisTurn = 0L
+                lastAnalysisFrameTime = 0L
+            }
             return START_NOT_STICKY
         }
 
@@ -438,9 +497,16 @@ class ScreenCaptureService : Service() {
 
         val metrics = resources.displayMetrics
 
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
-        val densityDpi = metrics.densityDpi
+        val displayWidth = metrics.widthPixels
+        val displayHeight = metrics.heightPixels
+        val scale = min(
+            1f,
+            MAX_CAPTURE_LONG_EDGE.toFloat() /
+                maxOf(displayWidth, displayHeight)
+        )
+        val width = (displayWidth * scale).toInt().coerceAtLeast(1)
+        val height = (displayHeight * scale).toInt().coerceAtLeast(1)
+        val densityDpi = (metrics.densityDpi * scale).toInt().coerceAtLeast(1)
 
         imageReader = ImageReader.newInstance(
             width,
@@ -570,6 +636,21 @@ class ScreenCaptureService : Service() {
             capturedFrameCount++
             if (analysisPaused) return
 
+            val now = SystemClock.elapsedRealtime()
+            if (thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE) {
+                return
+            }
+
+            val minimumFrameInterval =
+                if (thermalStatus >= PowerManager.THERMAL_STATUS_MODERATE) {
+                    1000L
+                } else {
+                    500L
+                }
+
+            if (now - lastAnalysisFrameTime < minimumFrameInterval) return
+            lastAnalysisFrameTime = now
+
             if (!firstFrameLogged) {
                 Log.d(
                     TAG,
@@ -602,37 +683,36 @@ class ScreenCaptureService : Service() {
                     "visible=${latestBitmapStats.visibleRatio}%"
             )
 
-            // Scene Detection tự tạo bản sao Bitmap.
-            sceneVisionEngine?.analyze(
-                bitmap = bitmap,
-                rotationDegrees = 0,
-                listener = sceneListener
-            )
-
-            // Face Detection tự sao chép bitmap và giới hạn nhịp 500ms.
-            faceVisionEngine?.analyze(
-                sourceBitmap = bitmap,
-                rotationDegrees = 0,
-                listener = faceListener
-            )
-
-            // Pose Detection tự sao chép bitmap đồng bộ.
-            poseVisionEngine?.analyze(
-                sourceBitmap = bitmap,
-                rotationDegrees = 0,
-                listener = poseListener
-            )
-
-            // Object Detection tiếp tục sử dụng bitmap gốc.
-            aiVisionEngine?.analyze(
-                bitmap = bitmap,
-                rotationDegrees = 0,
-                listener = visionListener
-            ) ?: run {
-                if (!bitmap.isRecycled) {
-                    bitmap.recycle()
+            val runFirstModel = analysisTurn++ % 2L == 0L
+            if (analysisMode == MODE_LANDSCAPE) {
+                if (runFirstModel) {
+                    sceneVisionEngine?.analyze(
+                        bitmap = bitmap,
+                        rotationDegrees = 0,
+                        listener = sceneListener
+                    )
+                    recycleSafely(bitmap)
+                } else {
+                    aiVisionEngine?.analyze(
+                        bitmap = bitmap,
+                        rotationDegrees = 0,
+                        listener = visionListener
+                    ) ?: recycleSafely(bitmap)
                 }
-                sendAiError("AI Vision Engine chưa sẵn sàng")
+            } else if (runFirstModel) {
+                poseVisionEngine?.analyze(
+                    sourceBitmap = bitmap,
+                    rotationDegrees = 0,
+                    listener = poseListener
+                )
+                recycleSafely(bitmap)
+            } else {
+                faceVisionEngine?.analyze(
+                    sourceBitmap = bitmap,
+                    rotationDegrees = 0,
+                    listener = faceListener
+                )
+                recycleSafely(bitmap)
             }
 
         } catch (error: Exception) {
@@ -737,7 +817,21 @@ class ScreenCaptureService : Service() {
         return croppedBitmap
     }
 
+    private fun recycleSafely(bitmap: Bitmap) {
+        if (!bitmap.isRecycled) bitmap.recycle()
+    }
+
     override fun onDestroy() {
+
+        if (thermalListenerRegistered && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                getSystemService(PowerManager::class.java)
+                    .removeThermalStatusListener(thermalStatusListener)
+            } catch (error: Exception) {
+                Log.w(TAG, "Không gỡ được thermal listener", error)
+            }
+            thermalListenerRegistered = false
+        }
 
         try {
             imageReader?.setOnImageAvailableListener(null, null)
